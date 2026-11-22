@@ -685,7 +685,7 @@
     "providerTranscribeCpp": "🧠 Transcribe.cpp",
     "transcribeBackendLabel": "Режим вычислений",
     "transcribeBackendAuto": "Авто",
-    "transcribeBackendVulkan": "Vulkan (ГПУ)",
+    "transcribeBackendVulkan": "Vulkan (GPU)",
     "transcribeBackendCpu": "CPU",
     "diarization": {
       "title": "Диаризация спикеров",
