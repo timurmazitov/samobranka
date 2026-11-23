@@ -71,7 +71,8 @@ export default function Home() {
         if (recordingState.isRecording ||
           status === RecordingStatus.STOPPING ||
           status === RecordingStatus.PROCESSING_TRANSCRIPTS ||
-          status === RecordingStatus.SAVING) {
+          status === RecordingStatus.SAVING ||
+          status === RecordingStatus.DIARIZING) {
           console.log('Skipping recovery check - recording in progress or processing');
           return;
         }
@@ -212,7 +213,8 @@ export default function Home() {
         {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
         {(hasMicrophone || isRecording) &&
           status !== RecordingStatus.PROCESSING_TRANSCRIPTS &&
-          status !== RecordingStatus.SAVING && (
+          status !== RecordingStatus.SAVING &&
+          status !== RecordingStatus.DIARIZING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"
@@ -243,10 +245,11 @@ export default function Home() {
             </div>
           )}
 
-        {/* Status Overlays - Processing and Saving */}
+        {/* Status Overlays - Processing, Saving and Detecting speakers */}
         <StatusOverlays
           isProcessing={status === RecordingStatus.PROCESSING_TRANSCRIPTS && !recordingState.isRecording}
           isSaving={status === RecordingStatus.SAVING}
+          isDetectingSpeakers={status === RecordingStatus.DIARIZING}
           sidebarCollapsed={sidebarCollapsed}
         />
       </div>

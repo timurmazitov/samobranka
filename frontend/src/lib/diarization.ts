@@ -503,6 +503,125 @@ export class DiarizationPassStore {
 }
 
 /**
+ * How long the live-stop flow waits for the first sign that a pass is really
+ * working before it concludes the pass never started and skips the stage.
+ *
+ * This is a hang guard, not the normal skip path: a configuration skip
+ * (`no_model`, `no_runtime`, `deferred`) answers through the pass promise
+ * itself, because native code returns immediately without running anything.
+ * The timer only covers a native side that hangs before deciding (a stalled
+ * database read or model discovery), where neither the promise resolves nor
+ * any progress event arrives. Five seconds is well past any honest cold
+ * decision (a database read plus a catalog scan and a runtime probe) while
+ * staying short enough that a hang never reads as a frozen stop flow.
+ */
+export const LIVE_DIARIZATION_FIRST_SIGNAL_MS = 5000;
+
+/**
+ * How long the live-stop flow waits once a pass has announced itself before
+ * it gives up and completes anyway. A pass that dies without ever emitting a
+ * terminal would otherwise hold the stop sequence open forever; ten minutes
+ * is far past any honest diarization of a meeting recording, so hitting it
+ * means the native task is hung and the stop must not wait for it.
+ */
+export const LIVE_DIARIZATION_STALLED_PASS_MS = 10 * 60_000;
+
+/**
+ * What the live-stop stage wait decided: the stage was shown because the
+ * pass actually ran, or it was skipped silently because it did not.
+ */
+export type LiveStopDiarizationOutcome = 'shown' | 'skipped';
+
+/**
+ * The slice of `DiarizationPassStore` the live-stop wait reads. Structural
+ * so a test can drive an injected store without the Tauri bridge.
+ */
+export interface LiveDiarizationStoreView {
+  subscribe: (onChange?: () => void) => () => void;
+  getState: (meetingId: string) => DiarizationPassState | null;
+}
+
+/**
+ * Starts the live pass and waits for its terminal so the stop sequence does
+ * not look finished while speakers are still being detected.
+ *
+ * The decision to show the stage is event-driven, exactly the way the shared
+ * pass state works everywhere else: the stage appears only once the store
+ * has seen a running pass for this meeting (`onPassStart` fires then), so a
+ * configuration skip stays silent. Three bounds keep the stop sequence from
+ * ever hanging on the pass:
+ *
+ * 1. the pass promise itself resolves — native code returns immediately for
+ *    `no_model` / `no_runtime` / `deferred`, and after the work for `ran`
+ *    and `failed`, so the skip and the normal completion need no timer;
+ * 2. the first-signal timeout, for a native side that hangs before deciding;
+ * 3. the stalled-pass timeout, for a pass that announces itself and then
+ *    dies without ever emitting a terminal.
+ *
+ * Never rejects: whatever the pass does, the stop sequence moves on.
+ */
+export async function waitForLiveDiarizationStage(
+  store: LiveDiarizationStoreView,
+  meetingId: string,
+  startPass: () => Promise<unknown>,
+  onPassStart?: () => void,
+  firstSignalMs: number = LIVE_DIARIZATION_FIRST_SIGNAL_MS,
+  stalledPassMs: number = LIVE_DIARIZATION_STALLED_PASS_MS,
+): Promise<LiveStopDiarizationOutcome> {
+  let unsubscribe: () => void = () => {};
+  try {
+    return await new Promise<LiveStopDiarizationOutcome>((resolve) => {
+      let settled = false;
+      let seenRunning = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (outcome: LiveStopDiarizationOutcome) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
+        resolve(outcome);
+      };
+      const check = () => {
+        const state = store.getState(meetingId);
+        const running = state !== null && state.phase === 'running';
+        if (running && !seenRunning) {
+          seenRunning = true;
+          // From here the bound is the stalled-pass timeout: a pass that
+          // announced itself may legitimately run for minutes, but a dead
+          // native task must not hold the stop sequence open forever.
+          if (timer !== undefined) clearTimeout(timer);
+          timer = setTimeout(() => finish('shown'), stalledPassMs);
+          onPassStart?.();
+        }
+        // The store drops a meeting's state on every terminal, so
+        // running-then-gone is the pass ending by event rather than by the
+        // command's return.
+        if (!running && seenRunning) finish('shown');
+      };
+      // Subscribe before dispatching, so the first stage cannot arrive
+      // before there is anybody listening.
+      unsubscribe = store.subscribe(check);
+      let pass: Promise<unknown>;
+      try {
+        pass = Promise.resolve(startPass());
+      } catch {
+        pass = Promise.resolve();
+      }
+      // The pass's own answer is the reliable skip signal: it resolves for
+      // every outcome, and an outcome that never ran a pass resolved without
+      // the store ever having seen one.
+      const onPassSettled = () => finish(seenRunning ? 'shown' : 'skipped');
+      pass.then(onPassSettled, onPassSettled);
+      // Neither the pass nor any stage announced itself: treat the pass as
+      // never started and let the stop flow finish.
+      timer = setTimeout(() => finish('skipped'), firstSignalMs);
+    });
+  } finally {
+    unsubscribe();
+  }
+}
+
+/**
  * Whether an automatic pass should interrupt the user with a toast.
  *
  * Only `failed` does: the three configuration statuses were not requested by

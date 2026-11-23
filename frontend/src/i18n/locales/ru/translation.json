@@ -548,7 +548,8 @@
     },
     "statusOverlays": {
       "finalizingTranscription": "Завершение транскрибации...",
-      "savingTranscript": "Сохранение транскрипции..."
+      "savingTranscript": "Сохранение транскрипции...",
+      "detectingSpeakers": "Определяем спикеров…"
     }
   },
   "models": {

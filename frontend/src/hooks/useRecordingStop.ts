@@ -9,7 +9,12 @@ import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateCon
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
 import { diarizationClient } from '@/lib/diarizationClient';
-import { startLiveDiarization } from '@/lib/diarization';
+import {
+  startLiveDiarization,
+  waitForLiveDiarizationStage,
+  type LiveDiarizationStoreView,
+} from '@/lib/diarization';
+import { diarizationPassStore } from '@/lib/diarizationPassStore';
 import {
   applyPinnedSummaryLanguageToMeeting,
   detectAndCacheSummaryLanguage,
@@ -40,7 +45,11 @@ interface UseRecordingStopReturn {
  */
 export function useRecordingStop(
   setIsRecording: (value: boolean) => void,
-  setIsRecordingDisabled: (value: boolean) => void
+  setIsRecordingDisabled: (value: boolean) => void,
+  // The shared diarization pass state seam. Production reads the singleton
+  // (the same store the speakers panel and the dialogs read); tests inject a
+  // fake driven by `diarization-progress` events.
+  passStore: LiveDiarizationStoreView = diarizationPassStore
 ): UseRecordingStopReturn {
   // USE global state instead
   const recordingState = useRecordingState();
@@ -71,17 +80,26 @@ export function useRecordingStop(
   const router = useRouter();
 
   // Diarization of a just-saved live recording: a post-transcription pass over
-  // the saved audio, independent of the transcription provider. Fire-and-forget
-  // so the stop flow and navigation never wait for it; failures are non-fatal
-  // because the meeting and its transcript are already saved.
+  // the saved audio, independent of the transcription provider. The stop
+  // sequence waits for the pass's terminal — but only once the shared pass
+  // state says the pass is really working (ticket 06's speaker stage): a pass
+  // that never starts (no model, no runtime, deferred by an active recording)
+  // answers through the command's own result, so the stop completes with no
+  // stage and no delay. Failures are non-fatal either way: the meeting and its
+  // transcript are already saved.
   //
-  // Native code decides whether the pass can run and refreshes the open meeting
-  // through the `transcript-updated` event. Only an actual failure is worth a
-  // toast: a missing model, a missing runtime or a deferred pass were not
-  // requested by the user.
-  const applyLiveDiarization = useCallback((meetingId: string) => {
-    void startLiveDiarization(diarizationClient, meetingId, toast);
-  }, []);
+  // Only an actual failure is worth a toast: a missing model, a missing
+  // runtime or a deferred pass were not requested by the user.
+  const applyLiveDiarization = useCallback(
+    (meetingId: string) =>
+      waitForLiveDiarizationStage(
+        passStore,
+        meetingId,
+        () => startLiveDiarization(diarizationClient, meetingId, toast),
+        () => setStatus(RecordingStatus.DIARIZING),
+      ),
+    [passStore, setStatus],
+  );
 
   // Guard to prevent duplicate/concurrent stop calls (e.g., from UI and tray simultaneously)
   const stopInProgressRef = useRef(false);
@@ -310,9 +328,13 @@ export function useRecordingStop(
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
-          // Live diarization runs after the meeting exists; it is async and
-          // non-fatal, so the UI is not held up by a long pass.
-          applyLiveDiarization(meetingId);
+          // Live diarization runs after the meeting exists. The stop sequence
+          // holds at the speaker stage until the pass's terminal lands — but
+          // only while the shared pass state says the pass is really working;
+          // a pass that never started (or died) completes the stop without
+          // ever showing the stage, so the stop flow cannot hang on it.
+          const diarizationStage = await applyLiveDiarization(meetingId);
+          console.log('Diarization stage of the stop flow:', diarizationStage);
 
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');
