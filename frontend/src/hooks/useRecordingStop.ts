@@ -115,7 +115,6 @@ export function useRecordingStop(
       try {
         console.log('Setting up recording-stopped listener for navigation...');
         unlistenFn = await listen<{
-          message: string;
           folder_path?: string;
           meeting_name?: string;
         }>('recording-stopped', async (event) => {
