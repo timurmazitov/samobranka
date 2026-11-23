@@ -39,14 +39,28 @@ import { useImportAudio, ImportResult } from '@/hooks/useImportAudio';
 import { useRouter } from 'next/navigation';
 import { useSidebar } from '../Sidebar/SidebarProvider';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
-
+import { diarizationStageMessage, type DiarizationPassStore } from '@/lib/diarization';
+import { diarizationPassStore as defaultPassStore } from '@/lib/diarizationPassStore';
+import {
+  defaultDiarizationAvailabilityClient,
+  importBarPercentage,
+  type DiarizationAvailabilityClient,
+} from '@/lib/diarizationAvailability';
 
 interface ImportAudioDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preselectedFile?: string | null;
   onComplete?: () => void;
+  /**
+   * Shared diarization pass state seam; production reads the singleton so the
+   * bar's diarization band is the same state the speakers panel shows.
+   */
+  passStore?: DiarizationPassStore;
+  /** Catalog + runtime probe seam; the same knowledge the speakers panel has. */
+  availabilityClient?: DiarizationAvailabilityClient;
 }
+
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -70,6 +84,8 @@ export function ImportAudioDialog({
   onOpenChange,
   preselectedFile,
   onComplete,
+  passStore = defaultPassStore,
+  availabilityClient = defaultDiarizationAvailabilityClient,
 }: ImportAudioDialogProps) {
   const router = useRouter();
   const { t } = useTranslation();
@@ -80,6 +96,8 @@ export function ImportAudioDialog({
   const [title, setTitle] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [titleModifiedByUser, setTitleModifiedByUser] = useState(false);
+  // The meeting the last completed import produced; "Done" navigates there.
+  const lastMeetingIdRef = useRef<string | null>(null);
 
   // Always start as false — represents "dialog has not yet been opened".
   // Do NOT initialize from the `open` prop: if the component mounts with open=true
@@ -96,15 +114,28 @@ export function ImportAudioDialog({
     resetSelection,
   } = useTranscriptionModels(transcriptModelConfig);
 
-  const handleImportComplete = useCallback((result: ImportResult) => {
-    toast.success(t('importAudio.toast.complete', { count: result.segments_count }));
-
-    // Refresh meetings list then navigate to the imported meeting
+  const handleImportSaved = useCallback(() => {
+    // The meeting row and transcript exist from this moment: the list can
+    // show it while the detached diarization pass keeps running.
     refetchMeetings();
     onComplete?.();
+  }, [refetchMeetings, onComplete]);
+
+  const handleImportComplete = useCallback((result: ImportResult) => {
+    // The diarization terminal (or the decision that no pass will run)
+    // arrived: only now does the dialog say the import is complete.
+    toast.success(t('importAudio.toast.complete', { count: result.segments_count }));
+    lastMeetingIdRef.current = result.meeting_id;
+  }, [t]);
+
+  /** Closes the dialog and opens the imported meeting; the pass, if any,
+   * keeps running and the speakers panel shows it. */
+  const goToImportedMeeting = useCallback(() => {
     onOpenChange(false);
-    router.push(`/meeting-details?id=${result.meeting_id}`);
-  }, [router, refetchMeetings, onComplete, onOpenChange, t]);
+    if (lastMeetingIdRef.current) {
+      router.push(`/meeting-details?id=${lastMeetingIdRef.current}`);
+    }
+  }, [onOpenChange, router]);
 
   const handleImportError = useCallback((error: string) => {
     toast.error(t('importAudio.toast.failed'), { description: error });
@@ -117,14 +148,19 @@ export function ImportAudioDialog({
     error,
     isProcessing,
     isBusy,
+    isDiarizing,
+    passState,
     selectFile,
     validateFile,
     startImport,
     cancelImport,
     reset,
   } = useImportAudio({
+    onSaved: handleImportSaved,
     onComplete: handleImportComplete,
     onError: handleImportError,
+    passStore,
+    availabilityClient,
   });
 
   // Reset state only when dialog transitions from closed to open
@@ -140,6 +176,7 @@ export function ImportAudioDialog({
       setTitle('');
       setTitleModifiedByUser(false);
       setShowAdvanced(false);
+      lastMeetingIdRef.current = null;
 
       // Validate preselected file if provided
       if (preselectedFile) {
@@ -202,25 +239,57 @@ export function ImportAudioDialog({
     onOpenChange(false);
   };
 
-  // Prevent closing during processing
+  // The transcript is still being produced: the dialog must not be closed
+  // and Cancel aborts the import. The diarization phase is deliberately NOT
+  // part of this — it is a detached pass the dialog does not own.
+  const isTranscribing = isProcessing;
+  const inProgress = isProcessing || isDiarizing;
+
+  // Prevent closing while the transcript is still being produced; during
+  // diarization closing is allowed and never interrupts the pass.
   const handleOpenChange = (newOpen: boolean) => {
-    if (!newOpen && isProcessing) {
+    if (!newOpen && isTranscribing) {
       return;
     }
     onOpenChange(newOpen);
   };
 
   const handleEscapeKeyDown = (event: KeyboardEvent) => {
-    if (isProcessing) {
+    if (isTranscribing) {
       event.preventDefault();
     }
   };
 
   const handleInteractOutside = (event: Event) => {
-    if (isProcessing) {
+    if (isTranscribing) {
       event.preventDefault();
     }
   };
+
+  // The bar: native milestones carry it to 75; from there the shared pass
+  // state maps the honest pass percentage into 75..100 (an indeterminate
+  // stage sits at 75), and the finished import reads 100.
+  const barPercent = status === 'complete'
+    ? 100
+    : importBarPercentage(progress?.progress_percentage ?? null, passState);
+  // The stage caption: the native stage word while the transcript is being
+  // produced (as before); from the save on, the shared pass state's stage
+  // sentence, falling back to the diarization sentence before the pass speaks.
+  const barStage = status === 'complete'
+    ? t('importAudio.stages.complete')
+    : passState && passState.phase === 'running'
+      ? diarizationStageMessage(passState.stage!)
+      : isDiarizing
+        ? t('importAudio.stages.diarizing')
+        : progress?.stage ?? t('importAudio.stages.diarizing');
+  const barMessage =
+    status === 'complete'
+      ? t('importAudio.stages.complete')
+      : progress?.message ??
+        (passState && passState.phase === 'running'
+          ? diarizationStageMessage(passState.stage!)
+          : t('importAudio.stages.diarizing'));
+  const showBar = !error && (inProgress || status === 'complete');
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -231,7 +300,7 @@ export function ImportAudioDialog({
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {isProcessing ? (
+            {inProgress ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
                 {t('importAudio.title.importing')}
@@ -254,7 +323,7 @@ export function ImportAudioDialog({
             )}
           </DialogTitle>
           <DialogDescription>
-            {isProcessing
+            {inProgress
               ? progress?.message || t('importAudio.description.processing')
               : error
               ? t('importAudio.description.error')
@@ -264,7 +333,7 @@ export function ImportAudioDialog({
 
         <div className="space-y-4 py-4">
           {/* File selection / info */}
-          {!isProcessing && !error && (
+          {!inProgress && !error && status !== 'complete' && (
             <>
               {fileInfo ? (
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
@@ -387,22 +456,29 @@ export function ImportAudioDialog({
             </>
           )}
 
-          {/* Progress display */}
-          {isProcessing && progress && (
+          {/* Progress display. Transcription runs to 75 on native milestones;
+              the diarization band 75..100 comes from the shared pass state,
+              so the bar no longer ends at transcription. */}
+          {showBar && (
             <div className="space-y-2">
               <div className="relative">
                 <div className="w-full bg-gray-200 rounded-full h-3">
                   <div
                     className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${Math.min(progress.progress_percentage, 100)}%` }}
+                    style={{ width: `${Math.min(barPercent, 100)}%` }}
                   />
                 </div>
                 <div className="flex justify-between text-xs text-gray-600 mt-1">
-                  <span>{progress.stage}</span>
-                  <span>{Math.round(progress.progress_percentage)}%</span>
+                  <span>{barStage}</span>
+                  <span>{Math.round(barPercent)}%</span>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground text-center">{progress.message}</p>
+              <p className="text-sm text-muted-foreground text-center">{barMessage}</p>
+              {isDiarizing && (
+                <p className="text-xs text-muted-foreground text-center">
+                  {t('importAudio.diarizationHint')}
+                </p>
+              )}
             </div>
           )}
 
@@ -415,7 +491,7 @@ export function ImportAudioDialog({
         </div>
 
         <DialogFooter>
-          {!isProcessing && !error && (
+          {!inProgress && !error && status !== 'complete' && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 {t('common.cancel')}
@@ -430,10 +506,23 @@ export function ImportAudioDialog({
               </Button>
             </>
           )}
-          {isProcessing && (
+          {isTranscribing && (
             <Button variant="outline" onClick={handleCancel}>
               <X className="h-4 w-4 mr-2" />
               {t('common.cancel')}
+            </Button>
+          )}
+          {isDiarizing && (
+            // Closing here does not touch the pass: it is detached on the
+            // native side, and the speakers panel keeps showing its state.
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {t('common.close')}
+            </Button>
+          )}
+          {status === 'complete' && (
+            <Button onClick={goToImportedMeeting} className="bg-blue-600 hover:bg-blue-700">
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              {t('importAudio.actions.done')}
             </Button>
           )}
           {error && (

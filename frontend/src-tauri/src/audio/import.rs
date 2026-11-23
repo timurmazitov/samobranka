@@ -19,6 +19,7 @@ use super::common::{
     create_transcript_segments, split_segment_at_silence, write_transcripts_json, BatchEngine,
 };
 use super::constants::AUDIO_EXTENSIONS;
+use super::progress_scale::{transcription_progress, DIARIZATION_BAND_START, SAVING_PROGRESS};
 use super::recording_preferences::get_default_recordings_folder;
 use super::transcription::diarization_run;
 use super::transcription::diarization_service::{
@@ -575,7 +576,10 @@ async fn run_import<R: Runtime>(
             return Err(anyhow!("Import cancelled"));
         }
 
-        let progress = 30 + ((i as f32 / processable_count.max(1) as f32) * 50.0) as u32;
+        // Transcription owns 30..70 (the old 30..80 was compressed to make
+        // room for the save 70..75 and diarization 75..100 stages), so the
+        // bar no longer finishes at transcription.
+        let progress = transcription_progress(i, processable_count);
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
             &app,
@@ -670,7 +674,9 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "saving", 85, "Creating meeting...");
+    // Saving owns 70..75: the last five points before the band the frontend
+    // holds for diarization (75..100, fed by the shared pass state).
+    emit_progress(&app, "saving", SAVING_PROGRESS, "Creating meeting...");
 
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
@@ -703,7 +709,7 @@ async fn run_import<R: Runtime>(
     }
 
     // Write transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, "saving", 90, "Writing transcript files...");
+    emit_progress(&app, "saving", DIARIZATION_BAND_START, "Writing transcript files...");
 
     if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -720,7 +726,11 @@ async fn run_import<R: Runtime>(
         warn!("Failed to write metadata.json: {}", e);
     }
 
-    emit_progress(&app, "complete", 100, "Import complete");
+    // The bar does not finish here: the last native milestone is 75, the
+    // top of the save band. The 75..100 band belongs to the diarization pass
+    // and is fed by the frontend's shared pass state (one number), so a
+    // native "100" here would make the bar lie about the work still running.
+    emit_progress(&app, "complete", DIARIZATION_BAND_START, "Import complete");
 
     // Diarization is a second stage over the saved meeting: the transcript is
     // already committed and the import is already complete for the user. There
@@ -994,6 +1004,18 @@ mod tests {
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].audio_start_time, Some(0.0));
         assert_eq!(segments[0].audio_end_time, Some(1.5));
+    }
+
+    /// The scale itself (the segment ramp, the save milestone, the band) is
+    /// shared and pinned once in `audio::progress_scale`. What stays here is
+    /// the import bar's own contract: its milestones are emitted *through*
+    /// that scale, so the last native value never crosses into the band the
+    /// frontend fills from the pass state.
+    #[test]
+    fn the_import_bar_stops_at_the_diarization_band() {
+        assert_eq!(SAVING_PROGRESS, 70);
+        assert_eq!(DIARIZATION_BAND_START, 75);
+        assert!(SAVING_PROGRESS < DIARIZATION_BAND_START);
     }
 
     #[test]

@@ -20,10 +20,11 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use super::diarization_service::{
-    decide_diarization, transcript_updated_payload, DiarizationDecision, DiarizationStatus,
-    DIARIZATION_FAILED_MESSAGE, DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
-    DIARIZATION_UNAVAILABLE_MESSAGE, SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
-    TRANSCRIPT_UPDATED_EVENT,
+    decide_diarization, diarization_progress_event, emit_pass_progress, transcript_updated_payload,
+    DiarizationDecision, DiarizationPhase, DiarizationStatus,
+    DIARIZATION_DEFERRED_MESSAGE, DIARIZATION_FAILED_MESSAGE,
+    DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE, DIARIZATION_UNAVAILABLE_MESSAGE,
+    SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE, TRANSCRIPT_UPDATED_EVENT,
 };
 use crate::database::repositories::meeting::MeetingsRepository;
 use crate::database::repositories::speaker;
@@ -74,8 +75,11 @@ pub enum DiarizationEvent {
         total_segments: usize,
     },
     /// The pass was attempted and failed. Configuration reasons
-    /// (`no_model`, `no_runtime`, `deferred`) are deliberately absent: the
-    /// user did not ask for those passes.
+    /// (`no_model`, `no_runtime`, `deferred`) are deliberately absent here:
+    /// the user did not ask for those passes. The one exception is a pass
+    /// that had already announced its `queued` stage and then deferred —
+    /// see [`deferred_after_queue_events`], because a surface that saw the
+    /// stage would otherwise wait for a terminal that never comes.
     Unavailable {
         meeting_id: String,
         status: DiarizationStatus,
@@ -89,17 +93,17 @@ pub enum DiarizationEvent {
 ///
 /// Native code is the source of truth for these texts; the frontend mirrors
 /// them. Missing model and missing runtime read differently on purpose so the
-/// user knows what to fix. The event itself fires only for `failed` today, but
-/// the `NoModel`/`NoRuntime` arms stay because the spec makes native code the
-/// source of truth for those texts and requires the frontend to mirror them;
-/// the mapping is pinned by tests.
+/// user knows what to fix. The event itself fires for `failed` and for a pass
+/// that deferred after announcing `queued` (see
+/// [`deferred_after_queue_events`]); the `NoModel`/`NoRuntime` arms stay
+/// because the spec makes native code the source of truth for those texts and
+/// requires the frontend to mirror them; the mapping is pinned by tests.
 pub fn unavailable_message(status: DiarizationStatus) -> &'static str {
     match status {
         DiarizationStatus::NoRuntime => DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
         DiarizationStatus::NoModel => DIARIZATION_UNAVAILABLE_MESSAGE,
-        DiarizationStatus::Failed | DiarizationStatus::Ran | DiarizationStatus::Deferred => {
-            DIARIZATION_FAILED_MESSAGE
-        }
+        DiarizationStatus::Deferred => DIARIZATION_DEFERRED_MESSAGE,
+        DiarizationStatus::Failed | DiarizationStatus::Ran => DIARIZATION_FAILED_MESSAGE,
     }
 }
 
@@ -137,7 +141,34 @@ pub fn diarization_events(
     events
 }
 
+/// The terminal a pass owes when it deferred *after* announcing `queued`.
+///
+/// The general `deferred` config reason stays silent (see
+/// [`diarization_events`]): a pass the decision postponed before it spoke
+/// owes the UI nothing. But once a surface has seen `queued` it is waiting on
+/// a terminal, and the under-lock recording re-check can still answer
+/// `deferred` — without this terminal the bar/indicator would hang in
+/// running forever. The payload reuses the `diarization-unavailable` channel
+/// with the `deferred` status; the frontend ends a non-`failed` payload on
+/// that channel without a toast, so this reads as an honest, silent stop.
+///
+/// Pure so the rule is unit-tested beside the silence rule it complements.
+pub fn deferred_after_queue_events(
+    meeting_id: &str,
+    announced_queued: bool,
+) -> Vec<DiarizationEvent> {
+    if !announced_queued {
+        return Vec::new();
+    }
+    vec![DiarizationEvent::Unavailable {
+        meeting_id: meeting_id.to_string(),
+        status: DiarizationStatus::Deferred,
+        error: None,
+    }]
+}
+
 /// What happened to a pass that ran after the batch job had already finished.
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BackgroundPassOutcome {
     /// The pass reached a status; configuration reasons and failures all land
@@ -351,6 +382,29 @@ async fn rewrite_transcripts_json(folder: &Path, segments: Vec<crate::api::Trans
     }
 }
 
+/// Announces the deferred terminal for a pass that had already announced
+/// `queued` and returns the in-band result. Separate from
+/// [`diarize_saved_meeting`] so the announce-and-return step is testable
+/// against the mock app without a model catalog or a recording to race.
+fn deferred_after_queued<R: Runtime>(
+    app: &AppHandle<R>,
+    meeting_id: &str,
+    total_segments: usize,
+) -> SavedMeetingDiarization {
+    let result = SavedMeetingDiarization {
+        meeting_id: meeting_id.to_string(),
+        status: DiarizationStatus::Deferred,
+        labeled_segments: 0,
+        total_segments,
+        error: None,
+    };
+    // The pass already announced `queued`, so this `deferred` is not the
+    // silent config reason: it must land as a terminal or the waiting
+    // surface hangs in running forever.
+    emit_events(app, &deferred_after_queue_events(meeting_id, true));
+    result
+}
+
 /// Diarizes a saved meeting: decide, run one pass over the meeting's audio
 /// file, persist the labels with the speaker-name recount, and emit the
 /// native events.
@@ -364,22 +418,21 @@ pub async fn diarize_saved_meeting<R: Runtime>(
     pool: &SqlitePool,
     meeting_id: &str,
 ) -> Result<SavedMeetingDiarization, String> {
-    // One pass at a time. The guard is held across the recording check and
-    // the model load so the decision and the pass cannot interleave with a
-    // second caller.
-    let _pass = acquire_pass_lock().await;
-
-    // The meeting is read before the decision: its segment count is part of
-    // every result, including the ones that never run a pass, and the speakers
-    // panel shows it. The recording check still runs before the *model load*,
-    // which is what the spec asks for — a cheap database read does not
-    // compete with an active recording.
+    // The meeting is read before the queue: its segment count is part of
+    // every result, including the ones that never run a pass, and the
+    // speakers panel shows it. A cheap database read does not compete with
+    // an active recording, so it does not have to wait for the lock.
     let meeting = MeetingsRepository::get_meeting(pool, meeting_id)
         .await
         .map_err(|error| format!("Failed to load meeting: {error}"))?
         .ok_or_else(|| format!("Meeting not found: {meeting_id}"))?;
     let total_segments = meeting.transcripts.len();
 
+    // The decision runs before the queue so a pass that will never start —
+    // `no_model`, `no_runtime`, `deferred` — can stay silent the way the
+    // spec demands: it owes the UI no progress stages, not even `queued`.
+    // The authoritative recording check still runs *under* the lock below,
+    // because a recording may start while this pass waits for its turn.
     let models = match crate::audio_cpp_engine::commands::model_manager() {
         Some(manager) => manager.discover_models().await.unwrap_or_default(),
         // No model manager means no catalogued model at all, exactly like a
@@ -423,6 +476,24 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         }
     };
 
+    // The queue stage belongs to a pass that will actually run, so it is
+    // announced here — before the lock, while a second pass still holds it.
+    // From this beat on, every early return owes a terminal: a surface that
+    // saw `queued` is waiting for one.
+    emit_pass_progress(app, meeting_id, DiarizationPhase::Queued);
+
+    // One pass at a time. The guard is held across the recording re-check and
+    // the model load so the pass cannot interleave with a second caller.
+    let _pass = acquire_pass_lock().await;
+
+    // The recording may have started while this pass waited in the queue;
+    // under the lock this is still the authoritative answer, because the
+    // model load that follows must not compete with an active recording.
+    if crate::audio::recording_commands::is_recording().await {
+        info!("Diarization of meeting {meeting_id} deferred: a recording started while the pass was queued");
+        return Ok(deferred_after_queued(app, meeting_id, total_segments));
+    }
+
     let folder = match meeting.folder_path.as_deref().map(PathBuf::from) {
         Some(folder) => folder,
         None => {
@@ -454,6 +525,8 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         .collect();
 
     let outcome = super::diarization_service::diarize_recording_folder_with_model(
+        app,
+        meeting_id,
         &folder,
         &mut segments,
         &model,
@@ -462,6 +535,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 
     let names_reset;
     if outcome.status == DiarizationStatus::Ran {
+        emit_pass_progress(app, meeting_id, DiarizationPhase::LabelsStarted);
         let labeled = segments
             .iter()
             .filter(|segment| segment.speaker.is_some())
@@ -481,6 +555,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         // it so imports, retranscriptions and live recordings do not leave a
         // `transcripts.json` whose speakers disagree with the transcript.
         rewrite_transcripts_json(&folder, segments).await;
+        emit_pass_progress(app, meeting_id, DiarizationPhase::LabelsCommitted);
         info!(
             "Diarized meeting {}: {} of {} transcript segments labeled",
             meeting_id, labeled, total_segments
@@ -511,7 +586,10 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 mod tests {
     use super::*;
     use crate::audio::common::BatchEngine;
-    use crate::audio::transcription::diarization_service::DiarizationStatus;
+    use crate::audio::transcription::diarization_service::{
+        DiarizationStatus, DIARIZATION_PROGRESS_EVENT,
+    };
+    use std::sync::Mutex;
 
     fn result(status: DiarizationStatus, labeled: usize, total: usize) -> SavedMeetingDiarization {
         SavedMeetingDiarization {
@@ -689,6 +767,75 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_that_never_announced_queued_defers_in_silence() {
+        // The decision-time `deferred` (a recording was already running when
+        // the user asked for the pass) never showed a stage, so it owes no
+        // terminal either: the silence rule of `diarization_events` still
+        // covers it.
+        assert_eq!(deferred_after_queue_events("meeting-1", false), Vec::new());
+    }
+
+    #[test]
+    fn a_queued_pass_that_defers_owes_exactly_one_deferred_terminal() {
+        // The race the silence rule cannot cover: the pass announced `queued`
+        // and only then found a recording under the lock. A surface watching
+        // the stage waits on a terminal, so exactly one must land.
+        assert_eq!(
+            deferred_after_queue_events("meeting-1", true),
+            vec![DiarizationEvent::Unavailable {
+                meeting_id: "meeting-1".to_string(),
+                status: DiarizationStatus::Deferred,
+                error: None,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_queued_then_deferred_terminal_emits_one_diarization_unavailable() {
+        // The emitting half of the race fix, on the mock app: the terminal
+        // lands on the existing `diarization-unavailable` channel with the
+        // `deferred` status and the deferred sentence, and nothing else. The
+        // frontend store already ends a running pass on any non-failed
+        // payload of this channel (pinned in
+        // `tests/lib/diarization-pass-state.test.ts`).
+        let (_pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = deferred_after_queued(app.handle(), "meeting-1", 2);
+
+        assert_eq!(result.status, DiarizationStatus::Deferred);
+        assert_eq!(result.total_segments, 2);
+        assert_eq!(
+            recorded(&recorded_events),
+            vec![(
+                DIARIZATION_UNAVAILABLE_EVENT.to_string(),
+                serde_json::json!({
+                    "meeting_id": "meeting-1",
+                    "status": "deferred",
+                    "reason": null,
+                    "message": DIARIZATION_DEFERRED_MESSAGE,
+                })
+            )],
+            "queued-then-deferred must emit exactly one terminal"
+        );
+    }
+
+    #[test]
+    fn a_deferred_pass_explains_itself_as_a_postponement_not_a_failure() {
+        // The under-lock race shows the user why the pass stopped: a
+        // recording, not a breakdown. A failure would send them looking for
+        // a broken engine.
+        assert_eq!(
+            unavailable_message(DiarizationStatus::Deferred),
+            DIARIZATION_DEFERRED_MESSAGE
+        );
+        assert_ne!(
+            unavailable_message(DiarizationStatus::Deferred),
+            unavailable_message(DiarizationStatus::Failed)
+        );
+    }
+
+    #[test]
     fn a_recount_that_dropped_every_name_is_announced_after_the_refresh() {
         let events = diarization_events(&result(DiarizationStatus::Ran, 2, 4), true);
 
@@ -705,6 +852,100 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// The progress event one pass phase must produce, as JSON, so the payload
+    /// contract (`meeting_id`, snake_case `stage`, optional
+    /// `progress_percentage`, `message`) is pinned by shape, not by
+    /// construction.
+    fn progress_json(phase: DiarizationPhase) -> serde_json::Value {
+        let event = diarization_progress_event("meeting-1", phase);
+        assert_eq!(event.meeting_id, "meeting-1");
+        serde_json::to_value(&event).expect("a progress event serializes")
+    }
+
+    #[test]
+    fn a_queued_phase_announces_the_stage_without_a_percentage() {
+        let payload = progress_json(DiarizationPhase::Queued);
+
+        assert_eq!(payload["meeting_id"], "meeting-1");
+        assert_eq!(payload["stage"], "queued");
+        // "Waiting for the queue" has no countable work: an honest indeterminate
+        // stage must omit the key, not invent a number.
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "queued is indeterminate: {payload}"
+        );
+        assert!(payload["message"].as_str().is_some_and(|text| !text.is_empty()));
+    }
+
+    #[test]
+    fn the_model_load_bookends_carry_the_honest_checkpoint_percentage() {
+        // The native load gives no intermediate data, so the honest percentage
+        // is the two checkpoints around it: just started, and committed.
+        let started = progress_json(DiarizationPhase::ModelLoadStarted);
+        assert_eq!(started["stage"], "loading_model");
+        assert_eq!(started["progress_percentage"], 0);
+
+        let committed = progress_json(DiarizationPhase::ModelLoadCommitted);
+        assert_eq!(committed["stage"], "loading_model");
+        assert_eq!(committed["progress_percentage"], 100);
+    }
+
+    #[test]
+    fn decoding_announces_the_stage_without_a_percentage() {
+        // The shared decoder gives the pass no callback, so a decoding
+        // percentage would be invented.
+        let payload = progress_json(DiarizationPhase::Decoding);
+
+        assert_eq!(payload["stage"], "decoding");
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "decoding is indeterminate: {payload}"
+        );
+    }
+
+    #[test]
+    fn inference_announces_the_stage_without_a_percentage() {
+        // The audio.cpp FFI returns nothing until the turn list is ready, so
+        // inference is indeterminate by contract.
+        let payload = progress_json(DiarizationPhase::Inferring);
+
+        assert_eq!(payload["stage"], "inferring");
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "inferring is indeterminate: {payload}"
+        );
+    }
+
+    #[test]
+    fn the_label_write_bookends_carry_the_honest_checkpoint_percentage() {
+        let started = progress_json(DiarizationPhase::LabelsStarted);
+        assert_eq!(started["stage"], "applying_labels");
+        assert_eq!(started["progress_percentage"], 0);
+
+        let committed = progress_json(DiarizationPhase::LabelsCommitted);
+        assert_eq!(committed["stage"], "applying_labels");
+        assert_eq!(committed["progress_percentage"], 100);
+    }
+
+    #[test]
+    fn every_stage_names_itself_in_snake_case_and_carries_a_message() {
+        let stages: Vec<(DiarizationPhase, &str)> = vec![
+            (DiarizationPhase::Queued, "queued"),
+            (DiarizationPhase::ModelLoadStarted, "loading_model"),
+            (DiarizationPhase::Decoding, "decoding"),
+            (DiarizationPhase::Inferring, "inferring"),
+            (DiarizationPhase::LabelsStarted, "applying_labels"),
+        ];
+        for (phase, stage) in stages {
+            let payload = progress_json(phase);
+            assert_eq!(payload["stage"], stage, "phase: {phase:?}");
+            assert!(
+                payload["message"].as_str().is_some_and(|text| !text.is_empty()),
+                "phase {phase:?} must explain itself: {payload}"
+            );
+        }
     }
 
     #[test]
@@ -957,6 +1198,112 @@ mod tests {
         assert_eq!(result.status, DiarizationStatus::NoModel);
         assert_eq!(result.labeled_segments, 0);
         assert_eq!(result.total_segments, 2);
+    }
+
+    /// Records every emit of the known pass-channel events — the three
+    /// terminals plus `diarization-progress` — the way the frontend listeners
+    /// see them. The mock runtime's `Event` carries no name, so each contract
+    /// event gets its own listener; an emit under any other name simply does
+    /// not reach them. Watching the progress channel here is what pins the
+    /// silence rule: a configuration reason must produce no progress stages.
+    struct EmittedEvents {
+        /// `(event name, payload)` in arrival order.
+        events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+        _ids: Vec<tauri::EventId>,
+    }
+
+    fn record_events<R: Runtime>(app: &AppHandle<R>) -> EmittedEvents {
+        let events: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut ids = Vec::new();
+        for name in [
+            TRANSCRIPT_UPDATED_EVENT,
+            DIARIZATION_UNAVAILABLE_EVENT,
+            SPEAKER_NAMES_RESET_EVENT,
+            DIARIZATION_PROGRESS_EVENT,
+        ] {
+            let collected = events.clone();
+            let name = name.to_string();
+            ids.push(tauri::Listener::listen_any(app, name.clone(), move |event| {
+                let payload =
+                    serde_json::from_str(event.payload()).expect("terminal events carry json");
+                collected.lock().unwrap().push((name.clone(), payload));
+            }));
+        }
+        EmittedEvents {
+            events,
+            _ids: ids,
+        }
+    }
+
+    fn recorded(events: &EmittedEvents) -> Vec<(String, serde_json::Value)> {
+        events.events.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn the_pass_emits_only_the_terminal_events_it_owed() {
+        // The emitter now reaches the whole pass chain (service, model load,
+        // inference), so a skipped pass must still announce exactly the
+        // terminal events it always did and nothing else: no new event names,
+        // no changed payloads.
+        let (pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = diarize_saved_meeting(app.handle(), &pool, "meeting-1")
+            .await
+            .expect("a missing model is a status, not an error");
+        assert_eq!(result.status, DiarizationStatus::NoModel);
+
+        let emitted = recorded(&recorded_events);
+        assert!(
+            emitted.is_empty(),
+            "a no_model pass stays silent, got: {emitted:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_pass_emits_only_diarization_unavailable_with_its_payload() {
+        // Same pinning for the announcing branch: the emitter threading must
+        // not add or rename events, and the payload keys stay exactly the
+        // contract the frontend mirrors.
+        let (pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = diarize_saved_meeting(app.handle(), &pool, "meeting-1")
+            .await
+            .expect("a skipped pass is a status, not an error");
+
+        let emitted = recorded(&recorded_events);
+        // With no catalogued model the pass stays a silent configuration
+        // reason; the assertion pins the silence rule, and the payload shape
+        // below pins the announcing rule for the same code path.
+        assert_eq!(result.status, DiarizationStatus::NoModel);
+        assert!(emitted.is_empty(), "got: {emitted:?}");
+
+        // The announcing path itself: a `failed` result must produce exactly
+        // one `diarization-unavailable` with the mirrored payload.
+        let failed = SavedMeetingDiarization {
+            meeting_id: "meeting-1".to_string(),
+            status: DiarizationStatus::Failed,
+            labeled_segments: 0,
+            total_segments: 2,
+            error: Some("meeting has no recording folder".to_string()),
+        };
+        emit_events(app.handle(), &diarization_events(&failed, false));
+
+        let emitted = recorded(&recorded_events);
+        assert_eq!(
+            emitted,
+            vec![(
+                DIARIZATION_UNAVAILABLE_EVENT.to_string(),
+                serde_json::json!({
+                    "meeting_id": "meeting-1",
+                    "status": "failed",
+                    "reason": "meeting has no recording folder",
+                    "message": DIARIZATION_FAILED_MESSAGE,
+                })
+            )],
+            "the emitter threading must not change the terminal events"
+        );
     }
 
     #[tokio::test]

@@ -4,6 +4,9 @@ use super::common::{
     create_transcript_segments, find_audio_file, split_segment_at_silence, write_transcripts_json,
     BatchEngine,
 };
+use super::progress_scale::{
+    transcription_progress, DIARIZATION_BAND_START, SAVING_PROGRESS, TRANSCRIPTION_BAND,
+};
 use super::transcription::diarization_run;
 use super::transcription::diarization_service::{
     SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
@@ -309,7 +312,7 @@ async fn run_retranscription<R: Runtime>(
         &app,
         &meeting_id,
         "transcribing",
-        25,
+        TRANSCRIPTION_BAND.0,
         "Loading transcription engine...",
     );
 
@@ -367,8 +370,11 @@ async fn run_retranscription<R: Runtime>(
             return Err(anyhow!("Retranscription cancelled"));
         }
 
-        // Calculate progress (25% to 80% range for transcription)
-        let progress = 25 + ((i as f32 / processable_count as f32) * 55.0) as u32;
+        // Transcription owns 30..70 (the old 25..80 was compressed to make
+        // room for the save 70..75 and diarization 75..100 stages, the same
+        // scale the import bar uses), so the bar no longer finishes at
+        // transcription.
+        let progress = transcription_progress(i, processable_count);
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
             &app,
@@ -464,7 +470,9 @@ async fn run_retranscription<R: Runtime>(
         return Err(anyhow!("Retranscription cancelled"));
     }
 
-    emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
+    // Saving owns 70..75: the last five points before the band the frontend
+    // holds for diarization (75..100, fed by the shared pass state).
+    emit_progress(&app, &meeting_id, "saving", SAVING_PROGRESS, "Saving transcripts...");
 
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
@@ -539,7 +547,7 @@ async fn run_retranscription<R: Runtime>(
         &app,
         &meeting_id,
         "saving",
-        90,
+        DIARIZATION_BAND_START,
         "Writing transcript files...",
     );
 
@@ -560,11 +568,15 @@ async fn run_retranscription<R: Runtime>(
         warn!("Failed to update metadata.json: {}", e);
     }
 
+    // The bar does not finish here: the last native milestone is 75, the
+    // top of the save band. The 75..100 band belongs to the diarization pass
+    // and is fed by the frontend's shared pass state (one number), so a
+    // native "100" here would make the bar lie about the work still running.
     emit_progress(
         &app,
         &meeting_id,
         "complete",
-        100,
+        DIARIZATION_BAND_START,
         "Retranscription complete",
     );
 
@@ -601,7 +613,6 @@ fn emit_progress<R: Runtime>(
         },
     );
 }
-
 
 /// Write or update metadata.json for retranscription (preserves existing fields, adds retranscribed_at)
 fn write_retranscription_metadata(
@@ -820,6 +831,19 @@ mod tests {
     fn test_vad_redemption_time_constant() {
         // Batch processing uses 2000ms to bridge natural pauses in full-file VAD
         assert_eq!(VAD_REDEMPTION_TIME_MS, 2000);
+    }
+
+    /// The scale itself (the segment ramp, the save milestone, the band) is
+    /// shared and pinned once in `audio::progress_scale`. What stays here is
+    /// the retranscription bar's own contract: its milestones are emitted
+    /// *through* that same scale as the import bar's, so the last native
+    /// value never crosses into the band the frontend fills from the pass
+    /// state.
+    #[test]
+    fn the_retranscription_bar_stops_at_the_diarization_band() {
+        assert_eq!(SAVING_PROGRESS, 70);
+        assert_eq!(DIARIZATION_BAND_START, 75);
+        assert!(SAVING_PROGRESS < DIARIZATION_BAND_START);
     }
 
     #[test]
