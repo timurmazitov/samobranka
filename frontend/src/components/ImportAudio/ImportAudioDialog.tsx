@@ -40,6 +40,7 @@ import { useRouter } from 'next/navigation';
 import { useSidebar } from '../Sidebar/SidebarProvider';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import { diarizationStageMessage, type DiarizationPassStore } from '@/lib/diarization';
+import { importProgressText, importStageLabel } from '@/lib/native-progress';
 import { diarizationPassStore as defaultPassStore } from '@/lib/diarizationPassStore';
 import {
   defaultDiarizationAvailabilityClient,
@@ -272,8 +273,8 @@ export function ImportAudioDialog({
   const barPercent = status === 'complete'
     ? 100
     : importBarPercentage(progress?.progress_percentage ?? null, passState);
-  // The stage caption: the native stage word while the transcript is being
-  // produced (as before); from the save on, the shared pass state's stage
+  // The stage caption: the localized native stage word while the transcript
+  // is being produced; from the save on, the shared pass state's stage
   // sentence, falling back to the diarization sentence before the pass speaks.
   const barStage = status === 'complete'
     ? t('importAudio.stages.complete')
@@ -281,11 +282,18 @@ export function ImportAudioDialog({
       ? diarizationStageMessage(passState.stage!)
       : isDiarizing
         ? t('importAudio.stages.diarizing')
-        : progress?.stage ?? t('importAudio.stages.diarizing');
+        : progress
+          ? importStageLabel(progress.stage)
+          : t('importAudio.stages.diarizing');
+  // The coded message resolves through `importAudio.progress.<code>`; the
+  // English `message` prose is the fallback for an unknown or absent code
+  // (native-i18n spec D7), never a blank line.
+  const nativeMessage = importProgressText(progress);
   const barMessage =
     status === 'complete'
       ? t('importAudio.stages.complete')
-      : progress?.message ??
+      : nativeMessage ??
+        progress?.message ??
         (passState && passState.phase === 'running'
           ? diarizationStageMessage(passState.stage!)
           : t('importAudio.stages.diarizing'));
@@ -324,7 +332,7 @@ export function ImportAudioDialog({
           </DialogTitle>
           <DialogDescription>
             {inProgress
-              ? progress?.message || t('importAudio.description.processing')
+              ? nativeMessage || progress?.message || t('importAudio.description.processing')
               : error
               ? t('importAudio.description.error')
               : t('importAudio.description.idle')}
