@@ -538,7 +538,8 @@
     },
     "statusOverlays": {
       "finalizingTranscription": "Finalizing transcription...",
-      "savingTranscript": "Saving transcript..."
+      "savingTranscript": "Saving transcript...",
+      "detectingSpeakers": "Detecting speakers…"
     }
   },
   "models": {

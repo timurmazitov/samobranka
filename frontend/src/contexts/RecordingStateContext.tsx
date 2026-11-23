@@ -23,6 +23,7 @@ export enum RecordingStatus {
   STOPPING = 'stopping',                  // Stop initiated, waiting for backend
   PROCESSING_TRANSCRIPTS = 'processing',  // Transcription completion wait
   SAVING = 'saving',                      // Saving to database
+  DIARIZING = 'diarizing',                // Detecting speakers after the save
   COMPLETED = 'completed',                // Successfully saved
   ERROR = 'error'                         // Error occurred
 }
@@ -181,7 +182,10 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             const newStatus = [
               RecordingStatus.STOPPING,
               RecordingStatus.PROCESSING_TRANSCRIPTS,
-              RecordingStatus.SAVING
+              RecordingStatus.SAVING,
+              // The speaker-detection stage is part of the stop flow too:
+              // a late `recording-stopped` must not roll it back to STOPPING.
+              RecordingStatus.DIARIZING
             ].includes(prev.status)
               ? prev.status  // Already in stop flow
               : RecordingStatus.STOPPING;  // New stop, transition smoothly
