@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-preferences';
 import {
+  DIARIZATION_BAND_START,
   shouldToastDiarizationUnavailable,
   showDiarizationFailure,
   type DiarizationPassState,
@@ -221,10 +222,11 @@ export function useImportAudio({
 
           // The transcript is saved: the bar enters the diarization band and
           // the dialog becomes closable; the detached pass continues whether
-          // the dialog stays open or not.
+          // the dialog stays open or not. The band start is the same number
+          // the native milestones stop at (`import.rs`'s `DIARIZATION_BAND_START`).
           setProgress({
             stage: IMPORT_DIARIZING_STAGE,
-            progress_percentage: 75,
+            progress_percentage: DIARIZATION_BAND_START,
             message: i18n.t('importAudio.stages.diarizing'),
           });
 
