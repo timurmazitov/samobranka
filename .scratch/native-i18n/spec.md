@@ -321,3 +321,34 @@ candidates are not lost. Not implemented by this spec:
   `.scratch/i18n/issues/01-native-strings.md`, whose file references predate the
   removal of the legacy audio.cpp transcription backend
   (`audio_cpp_engine/transcription.rs`, `session_thread.rs` no longer exist).
+- 2026-11-23 (review fix): **Judgement items evaluated, left as-is.**
+  (a) *7-arg `emit_progress` data clump* (retranscription.rs's
+  `app/meeting_id/stage/progress/message/code/params`): collapsing it into a
+  payload struct would touch all 22 emit sites in the two batch files for a
+  cosmetic gain and a wire-shape risk on exactly the events the frontend
+  pinning tests guard; the shared half (message/code/params builders) is
+  already one source in `audio/progress_codes.rs`. Not worth the churn.
+  (b) *`Plural::Other` `#[allow(dead_code)]`*: integer counts never select
+  `Other`, but `PluralForms::select` must match on it and the field is the
+  documented last-resort fallback for fractional counts; removing the variant
+  would force an unreachable arm or drop the catalog's `_other` key from the
+  contract. The allow is honest and documented (l10n/mod.rs).
+  (c) *`stored_language_value` wrapper*: it exists so the startup log can
+  distinguish "no key" from "bad value" (`stored={stored:?}`) while
+  `resolve_language` applies the exact-code gate itself, and it is
+  directly unit-tested; inlining the one-line `as_str()` map would lose the
+  log distinction for no gain.
+- 2026-11-23 (review fix): the branch's commit-message style (ticket-scoped
+  Russian subjects, `native-i18n: тикет NN — …`) follows repo precedent and
+  was accepted in review; the branch squashes at merge per CONTRIBUTING's
+  review process.
+- 2026-11-23 (review fix): **D10 Rust-side plural consumption was resolved
+  frontend-side** per the governing rule: the plural-sensitive progress
+  strings (segments found, `segment N of M`) travel as codes with `params`
+  and the `_one/_few/_many/_other` families are selected by i18next through
+  `count` in `frontend/src/lib/native-progress.ts` (ticket 06); the Rust
+  `Plural`/`PluralForms` helper has no non-test consumer today (no tray
+  string is plural-sensitive) — it is the built-ahead facility for the
+  OS-drawn out-of-scope surfaces that are (the "starts in {} minutes"
+  notification). No Rust code imports it for progress, which is the intended
+  division, not drift.
