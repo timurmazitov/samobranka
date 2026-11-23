@@ -13,18 +13,14 @@
 
 import { describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import en from '../../src/i18n/locales/en/translation.json';
+import ru from '../../src/i18n/locales/ru/translation.json';
 import {
   AUDIOCPP_DIARIZE_COMMAND,
-  DIARIZATION_DEFERRED_MESSAGE,
-  DIARIZATION_FAILED_MESSAGE,
-  DIARIZATION_NO_MODEL_MESSAGE,
-  DIARIZATION_NO_RUNTIME_MESSAGE,
   DIARIZATION_PROGRESS_EVENT,
   DIARIZATION_STAGES,
-  DIARIZATION_UNAVAILABLE_HINT,
   DIARIZATION_BAND_START,
   SPEAKER_NAMES_RESET_EVENT,
-  SPEAKER_NAMES_RESET_HINT,
   TRANSCRIPT_UPDATED_EVENT,
   TauriDiarizationClient,
   diarizationStatusMessage,
@@ -97,7 +93,7 @@ describe('startLiveDiarization', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  test('only a failed pass interrupts the user, and explains it with the mirrored text', async () => {
+  test('only a failed pass interrupts the user, and explains it with the localized failure text', async () => {
     const expected: Array<[DiarizationStatus, boolean]> = [
       ['ran', false],
       ['no_model', false],
@@ -115,7 +111,7 @@ describe('startLiveDiarization', () => {
       expect(error).toHaveBeenCalledTimes(speaks ? 1 : 0);
       if (speaks) {
         expect(error).toHaveBeenCalledWith('Diarization failed', {
-          description: DIARIZATION_FAILED_MESSAGE,
+          description: en.speakers.failures.failed,
         });
       }
     }
@@ -145,18 +141,42 @@ describe('showDiarizationFailure', () => {
     expect(error).toHaveBeenCalledTimes(1);
     expect(error.mock.calls[0]).toEqual([
       'Diarization failed',
-      { description: DIARIZATION_FAILED_MESSAGE },
+      { description: en.speakers.failures.failed },
     ]);
   });
 
-  test('keeps a native explanation when the event carries one', () => {
+  test('renders the catalog sentence for a known native code, whatever the prose says', () => {
     const error = mock((_message: string, _options?: { description?: string }) => {});
 
-    showDiarizationFailure({ error }, DIARIZATION_NO_RUNTIME_MESSAGE);
+    showDiarizationFailure({ error }, { code: 'runtime_unavailable', message: 'stale prose' });
 
     expect(error.mock.calls[0]).toEqual([
       'Diarization failed',
-      { description: DIARIZATION_NO_RUNTIME_MESSAGE },
+      { description: en.speakers.failures.runtime_unavailable },
+    ]);
+  });
+
+  test('falls back to the native prose for a code the catalog does not know', () => {
+    // D7: an additive payload may carry a code newer than this build; the
+    // prose field is what keeps the toast from going empty.
+    const error = mock((_message: string, _options?: { description?: string }) => {});
+
+    showDiarizationFailure({ error }, { code: 'from_the_future', message: 'Native explains itself' });
+
+    expect(error.mock.calls[0]).toEqual([
+      'Diarization failed',
+      { description: 'Native explains itself' },
+    ]);
+  });
+
+  test('falls back to the generic failure sentence when neither code nor prose speaks', () => {
+    const error = mock((_message: string, _options?: { description?: string }) => {});
+
+    showDiarizationFailure({ error }, { code: 'from_the_future', message: '   ' });
+
+    expect(error.mock.calls[0]).toEqual([
+      'Diarization failed',
+      { description: en.speakers.failures.failed },
     ]);
   });
 });
@@ -217,12 +237,14 @@ describe('shouldToastDiarizationUnavailable', () => {
 
 describe('diarizationStatusMessage', () => {
   test('explains every non-success status and stays silent after a pass', () => {
+    // The single source of truth is the frontend catalog: the panel answers an
+    // explicit run with `speakers.failures.<status>` in the current language.
     const expected: Array<[DiarizationStatus, string | null]> = [
       ['ran', null],
-      ['no_model', DIARIZATION_NO_MODEL_MESSAGE],
-      ['no_runtime', DIARIZATION_NO_RUNTIME_MESSAGE],
-      ['deferred', DIARIZATION_DEFERRED_MESSAGE],
-      ['failed', DIARIZATION_FAILED_MESSAGE],
+      ['no_model', en.speakers.failures.unavailable],
+      ['no_runtime', en.speakers.failures.runtime_unavailable],
+      ['deferred', en.speakers.failures.deferred],
+      ['failed', en.speakers.failures.failed],
     ];
 
     for (const [status, message] of expected) {
@@ -232,22 +254,96 @@ describe('diarizationStatusMessage', () => {
 
   test('a manual run never explains two different refusals with the same text', () => {
     const messages = [
-      DIARIZATION_NO_MODEL_MESSAGE,
-      DIARIZATION_NO_RUNTIME_MESSAGE,
-      DIARIZATION_DEFERRED_MESSAGE,
-      DIARIZATION_FAILED_MESSAGE,
+      en.speakers.failures.unavailable,
+      en.speakers.failures.runtime_unavailable,
+      en.speakers.failures.deferred,
+      en.speakers.failures.failed,
     ];
 
     expect(new Set(messages).size).toBe(messages.length);
   });
 });
 
-describe('mirrored native texts', () => {
-  // The native constants in
-  // `src-tauri/src/audio/transcription/diarization_service.rs` are the source
-  // of truth; the frontend duplicates them for direct command answers. The
-  // test reads that file and extracts each constant by name, so a third
-  // hand-written copy can no longer stand in for the real strings.
+/**
+ * The state codes the native terminal payloads carry, mirroring the
+ * `DiarizationStateCode` constants in `diarization_service.rs` (the frontend
+ * catalog keys `speakers.failures.<code>` hang off them).
+ */
+const STATE_CODES = [
+  'unavailable',
+  'runtime_unavailable',
+  'failed',
+  'deferred',
+  'reset',
+] as const;
+
+/** Reads a leaf out of an imported catalog JSON by dotted path. */
+function catalogValue(catalog: unknown, key: string): unknown {
+  let value: unknown = catalog;
+  for (const part of key.split('.')) {
+    if (value === null || typeof value !== 'object') return undefined;
+    value = (value as Record<string, unknown>)[part];
+  }
+  return value;
+}
+
+describe('failure state codes', () => {
+  // D8: the frontend catalog is the single source of truth for the diarization
+  // sentences. Rust emits a stable state code with the terminal payloads and
+  // the UI resolves it through `t('speakers.failures.<code>')` — so what the
+  // old "the two texts match" pin asserted is now asserted as: every code the
+  // native side can send resolves to a real, non-empty translation in both
+  // locales, and the code literals themselves are pinned to the native source
+  // (same readFileSync technique as the event-name pin below, so a code added
+  // on one side only fails loudly here).
+  const NATIVE_SOURCE = new URL(
+    '../../src-tauri/src/audio/transcription/diarization_service.rs',
+    import.meta.url,
+  );
+
+  test('every state code resolves to a non-empty translation in both locales', () => {
+    for (const code of STATE_CODES) {
+      for (const [language, catalog] of [
+        ['en', en],
+        ['ru', ru],
+      ] as const) {
+        const value = catalogValue(catalog, `speakers.failures.${code}`);
+        expect({ language, code, value }).toMatchObject({
+          value: expect.stringMatching(/\S/),
+        });
+      }
+    }
+  });
+
+  test('the native payload code constants match the frontend catalog codes', () => {
+    // The payload keys and the code literals are the contract: a native emit
+    // outside this set would render the generic fallback instead of an
+    // explanation, so it must not appear silently.
+    const source = readFileSync(NATIVE_SOURCE, 'utf8');
+    const constants = [...source.matchAll(/pub const [A-Z_]+: &str = "([a-z_]+)";/g)]
+      .map(([, value]) => value)
+      .filter((value) => (STATE_CODES as readonly string[]).includes(value));
+
+    // All five are present as native constants…
+    expect([...new Set(constants)].sort()).toEqual([...STATE_CODES].sort());
+
+    // …and the two emits use exactly the mapping the catalog keys assume:
+    // `unavailable_code(status)` for `diarization-unavailable`, the reset
+    // constant for `speaker-names-reset`.
+    const runSource = readFileSync(
+      new URL('../../src-tauri/src/audio/transcription/diarization_run.rs', import.meta.url),
+      'utf8',
+    );
+    expect(runSource).toMatch(/"code": unavailable_code\(\*status\)/);
+    expect(runSource).toMatch(/SPEAKER_NAMES_RESET_EVENT,[\s\S]{0,220}"code": SPEAKER_NAMES_RESET_CODE/);
+    // The five mirrored sentences are gone from the native source entirely:
+    // the catalog is the only producer (grep acceptance criterion, pinned).
+    expect(source).not.toMatch(/Speaker labels were/);
+    expect(source).not.toMatch(/Speaker names were reset because/);
+  });
+});
+
+describe('native event and stage contracts', () => {
   const NATIVE_SOURCE = new URL(
     '../../src-tauri/src/audio/transcription/diarization_service.rs',
     import.meta.url,
@@ -267,32 +363,6 @@ describe('mirrored native texts', () => {
     // escaping cannot hide behind `JSON.parse`.
     return match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
   }
-
-  test('mirror the native message strings verbatim', () => {
-    const expected: Array<[string, string]> = [
-      [DIARIZATION_NO_MODEL_MESSAGE, nativeConstant('DIARIZATION_UNAVAILABLE_MESSAGE')],
-      [
-        DIARIZATION_NO_RUNTIME_MESSAGE,
-        nativeConstant('DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE'),
-      ],
-      [DIARIZATION_FAILED_MESSAGE, nativeConstant('DIARIZATION_FAILED_MESSAGE')],
-      [DIARIZATION_DEFERRED_MESSAGE, nativeConstant('DIARIZATION_DEFERRED_MESSAGE')],
-      [SPEAKER_NAMES_RESET_HINT, nativeConstant('SPEAKER_NAMES_RESET_MESSAGE')],
-    ];
-
-    for (const [actual, expectedText] of expected) {
-      expect(actual).toBe(expectedText);
-    }
-  });
-
-  test('the panel hint is the native no-model sentence, not a new wording', () => {
-    // The hint is the part of the native message the panel shows; deriving it
-    // here keeps the two from drifting without demanding a second native
-    // constant for a substring.
-    expect(nativeConstant('DIARIZATION_UNAVAILABLE_MESSAGE')).toContain(
-      DIARIZATION_UNAVAILABLE_HINT,
-    );
-  });
 
   test('name the native event constants', () => {
     expect(TRANSCRIPT_UPDATED_EVENT).toBe(nativeConstant('TRANSCRIPT_UPDATED_EVENT'));
@@ -329,6 +399,24 @@ describe('mirrored native texts', () => {
     );
 
     expect([...DIARIZATION_STAGES] as string[]).toEqual(nativeStages);
+  });
+
+  test('every stage has a catalog sentence in both locales', () => {
+    // `diarizationStageMessage()` switches over the union and never falls back
+    // to the native `message` field, so an absent key would render the raw
+    // key path on screen. The Rust stage sentences (`DiarizationPhase::message`)
+    // are log-only self-description, never a render fallback.
+    for (const stage of DIARIZATION_STAGES) {
+      for (const [language, catalog] of [
+        ['en', en],
+        ['ru', ru],
+      ] as const) {
+        const value = catalogValue(catalog, `speakers.stages.${stage}`);
+        expect({ language, stage, value }).toMatchObject({
+          value: expect.stringMatching(/\S/),
+        });
+      }
+    }
   });
 });
 

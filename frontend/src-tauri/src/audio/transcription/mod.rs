@@ -17,8 +17,8 @@ pub use diarization::{attribute_segments_to_speakers, SpeakerTurnInterval};
 pub use diarization_service::{
     apply_speaker_labels, decide_diarization, diarize_recording_folder_with_model,
     installed_diarization_model, ran_segments, select_diarization_model, unavailable_for,
-    DiarizationDecision, DiarizationOutcome, DiarizationStatus, DIARIZATION_UNAVAILABLE_MESSAGE,
-    SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
+    DiarizationDecision, DiarizationOutcome, DiarizationStatus, DIARIZATION_UNAVAILABLE_CODE,
+    SPEAKER_NAMES_RESET_CODE, SPEAKER_NAMES_RESET_EVENT,
 };
 pub use engine::{
     get_or_init_transcribe_cpp_provider, get_or_init_transcribe_cpp_provider_for_batch,

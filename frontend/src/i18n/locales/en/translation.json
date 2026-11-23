@@ -961,6 +961,17 @@
       "applying_labels": "Updating speakers…"
     },
     "catalogWarning": "Could not read the diarization model list. A run will report the real status.",
+    "failures": {
+      "unavailable": "Speaker labels were skipped. Download the Nemotron-3-Diarization model in Settings to see who said what.",
+      "runtime_unavailable": "Speaker labels were skipped. The audio.cpp engine is unavailable on this system.",
+      "failed": "Speaker labels were skipped because diarization failed.",
+      "deferred": "Speaker labels were postponed because a recording is in progress. Run diarization again once the recording stops.",
+      "reset": "Speaker names were reset because the voices were recomputed.",
+      "noSpeakersFound": "Diarization finished but found no distinct speakers in this recording."
+    },
+    "hints": {
+      "noModel": "Download the Nemotron-3-Diarization model in Settings to see who said what."
+    },
     "passFailed": "Diarization failed: {{reason}}",
     "passFailedNoReason": "Diarization failed",
     "retry": "Retry",

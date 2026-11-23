@@ -876,8 +876,10 @@ test('empty panel shows the diarization hint', async () => {
   const instance = await render();
   await openPanel(instance);
 
-  const { DIARIZATION_UNAVAILABLE_HINT } = await import('../../src/lib/diarization');
-  expect(text(instance)).toContain(DIARIZATION_UNAVAILABLE_HINT);
+  const en = (await import('../../src/i18n/locales/en/translation.json')).default;
+  // No diarization model installed: the panel states the download sentence
+  // (the frontend catalog is the single source, native-i18n spec D8).
+  expect(text(instance)).toContain(en.speakers.failures.unavailable);
 });
 
 // --- Manual diarization from the panel ------------------------------------
@@ -894,8 +896,8 @@ test('the empty state keeps the hint and offers a manual run button', async () =
 
   const instance = await renderPanel();
 
-  const { DIARIZATION_UNAVAILABLE_HINT } = await import('../../src/lib/diarization');
-  expect(text(instance)).toContain(DIARIZATION_UNAVAILABLE_HINT);
+  const en = (await import('../../src/i18n/locales/en/translation.json')).default;
+  expect(text(instance)).toContain(en.speakers.hints.noModel);
   expect(diarizeButton(instance)).toBeDefined();
 });
 

@@ -299,7 +299,7 @@ export function useImportAudio({
             return;
           }
           if (!shouldToastDiarizationUnavailable(event.payload.status)) return;
-          showDiarizationFailure(toast, event.payload.message);
+          showDiarizationFailure(toast, event.payload);
         }
       );
       if (cleanedUpRef.current) {

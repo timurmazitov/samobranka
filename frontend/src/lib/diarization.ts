@@ -76,49 +76,75 @@ export class TauriDiarizationClient implements DiarizationClient {
 }
 
 /**
- * Mirrored native message texts.
+ * The state codes the native terminal payloads carry (native-i18n spec D8).
  *
- * `frontend/src-tauri/src/audio/transcription/diarization_service.rs` is the
- * source of truth; the frontend duplicates the strings it needs for direct
- * answers to an explicit run. `tests/lib/live-diarization.test.ts` compares
- * them verbatim, so the two cannot drift apart silently.
+ * `frontend/src-tauri/src/audio/transcription/diarization_service.rs` emits
+ * one of these with `diarization-unavailable` and `speaker-names-reset`; the
+ * frontend catalog key `speakers.failures.<code>` is the single source of
+ * truth for the sentence the user reads. The payload's `message` stays as the
+ * diagnostic fallback for a code this build does not know yet (spec D7).
  */
-
-/** Native `DIARIZATION_UNAVAILABLE_MESSAGE`: no diarization model installed. */
-export const DIARIZATION_NO_MODEL_MESSAGE =
-  'Speaker labels were skipped. Download the Nemotron-3-Diarization model in Settings to see who said what.';
-
-/** Native `DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE`: model present, library missing. */
-export const DIARIZATION_NO_RUNTIME_MESSAGE =
-  'Speaker labels were skipped. The audio.cpp engine is unavailable on this system.';
-
-/** Native `DIARIZATION_FAILED_MESSAGE`: the pass was attempted and broke. */
-export const DIARIZATION_FAILED_MESSAGE =
-  'Speaker labels were skipped because diarization failed.';
+export type DiarizationFailureCode =
+  | 'unavailable'
+  | 'runtime_unavailable'
+  | 'failed'
+  | 'deferred'
+  | 'reset';
 
 /**
- * No native counterpart: a deferred pass is silent in automatic paths, so
- * native code has no message for it. The panel explains it when the user asks
- * for a run during a recording.
+ * A code as it arrives on the wire: the known set, plus any string an older
+ * frontend than the emitter may carry (spec D7 — the resolver falls back to
+ * the prose for an unknown code, so the type must not reject it). The
+ * `(string & {})` arm keeps editor completion for the known codes.
  */
-export const DIARIZATION_DEFERRED_MESSAGE =
-  'Speaker labels were postponed because a recording is in progress. Run diarization again once the recording stops.';
+export type WireDiarizationFailureCode = DiarizationFailureCode | (string & {});
 
 /**
- * No native counterpart: `ran` with zero labels is a successful pass, so native
- * code has no refusal text. The panel still explains why the list stayed empty
- * after the user pressed the button.
+ * The refusal sentence for a native state code, in the current language, or
+ * `null` for a code this build's catalog does not carry — the caller then
+ * falls back to the payload's prose, and finally to a generic key, so a toast
+ * description is never empty.
+ *
+ * The keys are written literally so the i18n usage guard sees them.
  */
-export const DIARIZATION_NO_SPEAKERS_FOUND_MESSAGE =
-  'Diarization finished but found no distinct speakers in this recording.';
+export function diarizationFailureMessage(code: unknown): string | null {
+  switch (code) {
+    case 'unavailable':
+      return i18n.t('speakers.failures.unavailable');
+    case 'runtime_unavailable':
+      return i18n.t('speakers.failures.runtime_unavailable');
+    case 'failed':
+      return i18n.t('speakers.failures.failed');
+    case 'deferred':
+      return i18n.t('speakers.failures.deferred');
+    case 'reset':
+      return i18n.t('speakers.failures.reset');
+    default:
+      return null;
+  }
+}
 
-/** Hint shown in the speakers panel when the meeting has no labels yet. */
-export const DIARIZATION_UNAVAILABLE_HINT =
-  'Download the Nemotron-3-Diarization model in Settings to see who said what.';
+/** The payload's prose, or `null` when it is absent or blank. */
+function nonBlankMessage(message: string | null | undefined): string | null {
+  return typeof message === 'string' && message.trim() ? message : null;
+}
 
-/** Hint shown when a recount of the labels removed every speaker name. */
-export const SPEAKER_NAMES_RESET_HINT =
-  'Speaker names were reset because the voices were recomputed.';
+/**
+ * The user-facing half of a failure terminal: code first, prose only as the
+ * fallback an unknown code leaves (spec D7), never an empty string. Exported
+ * for listeners that word their own toast (the speaker-names reset).
+ */
+export function diarizationFailureDescription(
+  code: unknown,
+  message: string | null | undefined,
+  genericKey: string,
+): string {
+  return (
+    diarizationFailureMessage(code)
+    ?? nonBlankMessage(message)
+    ?? i18n.t(genericKey)
+  );
+}
 
 /** The native event that announces a full reset of the meeting's names. */
 export const SPEAKER_NAMES_RESET_EVENT = 'speaker-names-reset';
@@ -130,6 +156,9 @@ export interface SpeakerNamesResetPayload {
    * meeting, so the id is always present; optional for older payloads.
    */
   meeting_id?: string;
+  /** The native state code; `reset` on every current emitter. */
+  code?: WireDiarizationFailureCode;
+  /** Diagnostic prose (spec D7); the code decides what the user reads. */
   message?: string;
 }
 
@@ -826,21 +855,33 @@ export interface DiarizationToast {
   error(message: string, options?: { description?: string }): void;
 }
 
+/** What a failure toast may carry from the terminal payload (spec D7). */
+export interface DiarizationFailureInfo {
+  code?: WireDiarizationFailureCode;
+  message?: string;
+}
+
 /**
  * The one place that words a failed diarization pass.
  *
  * The live stop flow, the import dialog and the retranscription dialog all
  * announce the same event, and a second wording would make the same failure
- * read differently depending on which screen noticed it. The description stays
- * the native text when the event carries one, so native code remains the source
- * of truth for the explanation.
+ * read differently depending on which screen noticed it. The description is
+ * the catalog sentence for the payload's state code; the prose field stays the
+ * fallback for a code this build does not know (spec D7), and the generic
+ * `failed` sentence covers a payload with neither, so a description is never
+ * empty.
  */
 export function showDiarizationFailure(
   toast: DiarizationToast,
-  message?: string,
+  info?: DiarizationFailureInfo,
 ): void {
   toast.error(i18n.t('toasts.diarization.failed'), {
-    description: message ?? DIARIZATION_FAILED_MESSAGE,
+    description: diarizationFailureDescription(
+      info?.code,
+      info?.message,
+      'speakers.failures.failed',
+    ),
   });
 }
 
@@ -876,9 +917,14 @@ export interface DiarizationUnavailablePayload {
   meeting_id?: string;
   /** Why the pass did not produce labels. */
   status?: DiarizationStatus;
+  /** The native state code paired with `status`; decides the user-facing sentence. */
+  code?: WireDiarizationFailureCode;
   /** Diagnostic detail; never user-facing prose. */
   reason?: string | null;
-  /** User-facing explanation, owned by native code. */
+  /**
+   * Diagnostic prose the native side still sends as the fallback for a code
+   * this build does not know (spec D7).
+   */
   message?: string;
 }
 
@@ -901,20 +947,22 @@ export function shouldToastDiarizationUnavailable(
  * Explanation of a status for an explicit run, or `null` after a pass.
  *
  * Unlike the automatic path, the panel shows the reason for every refusal: it
- * answers a button the user pressed.
+ * answers a button the user pressed. The sentence comes from the frontend
+ * catalog (native-i18n spec D8): `no_model` is the `unavailable` code's
+ * sentence — the manual run knows the model is missing, the UI says so.
  */
 export function diarizationStatusMessage(status: DiarizationStatus): string | null {
   switch (status) {
     case 'ran':
       return null;
     case 'no_model':
-      return DIARIZATION_NO_MODEL_MESSAGE;
+      return i18n.t('speakers.failures.unavailable');
     case 'no_runtime':
-      return DIARIZATION_NO_RUNTIME_MESSAGE;
+      return i18n.t('speakers.failures.runtime_unavailable');
     case 'deferred':
-      return DIARIZATION_DEFERRED_MESSAGE;
+      return i18n.t('speakers.failures.deferred');
     case 'failed':
-      return DIARIZATION_FAILED_MESSAGE;
+      return i18n.t('speakers.failures.failed');
   }
 }
 

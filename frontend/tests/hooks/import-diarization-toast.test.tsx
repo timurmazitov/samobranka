@@ -14,7 +14,7 @@
 import React from 'react';
 import { afterAll, afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { DIARIZATION_FAILED_MESSAGE } from '../../src/lib/diarization';
+import en from '../../src/i18n/locales/en/translation.json';
 
 const originals = await Promise.all(
   ['@tauri-apps/api/core', '@tauri-apps/api/event', 'sonner'].map(
@@ -133,7 +133,10 @@ test('a failed pass is reported because the user should know labels are missing'
     meeting_id: 'meeting-a',
     status: 'failed',
     reason: 'engine exploded',
-    message: DIARIZATION_FAILED_MESSAGE,
+    // D7 wire format: the code drives the UI; the prose field stays as the
+    // diagnostic fallback an older frontend build would render.
+    code: 'failed',
+    message: 'native diagnostic prose',
   });
 
   expect(toastError).toHaveBeenCalledTimes(1);
@@ -142,7 +145,7 @@ test('a failed pass is reported because the user should know labels are missing'
     { description?: string },
   ];
   expect(title).toBe('Diarization failed');
-  expect(options.description).toBe(DIARIZATION_FAILED_MESSAGE);
+  expect(options.description).toBe(en.speakers.failures.failed);
 });
 
 test('a failed pass for another meeting does not toast inside the import dialog', async () => {
@@ -154,7 +157,10 @@ test('a failed pass for another meeting does not toast inside the import dialog'
   await emitDiarizationUnavailable({
     meeting_id: 'meeting-b',
     status: 'failed',
-    message: DIARIZATION_FAILED_MESSAGE,
+    // D7 wire format: the code drives the UI; the prose field stays as the
+    // diagnostic fallback an older frontend build would render.
+    code: 'failed',
+    message: 'native diagnostic prose',
   });
 
   expect(toastError).not.toHaveBeenCalled();
@@ -166,7 +172,10 @@ test('a failure that arrives before this import has an id is ignored', async () 
   await emitDiarizationUnavailable({
     meeting_id: 'meeting-b',
     status: 'failed',
-    message: DIARIZATION_FAILED_MESSAGE,
+    // D7 wire format: the code drives the UI; the prose field stays as the
+    // diagnostic fallback an older frontend build would render.
+    code: 'failed',
+    message: 'native diagnostic prose',
   });
 
   expect(toastError).not.toHaveBeenCalled();

@@ -14,7 +14,7 @@
 import React from 'react';
 import { afterAll, afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { DIARIZATION_FAILED_MESSAGE } from '../../src/lib/diarization';
+import en from '../../src/i18n/locales/en/translation.json';
 
 const modules = [
   '../../src/components/ui/dialog',
@@ -153,7 +153,10 @@ test('a failed pass is reported for the meeting being retranscribed', async () =
     meeting_id: 'meeting-a',
     status: 'failed',
     reason: 'engine exploded',
-    message: DIARIZATION_FAILED_MESSAGE,
+    // D7 wire format: the code drives the UI; the prose field stays as the
+    // diagnostic fallback an older frontend build would render.
+    code: 'failed',
+    message: 'native diagnostic prose',
   });
 
   expect(toastError).toHaveBeenCalledTimes(1);
@@ -162,7 +165,7 @@ test('a failed pass is reported for the meeting being retranscribed', async () =
     { description?: string },
   ];
   expect(title).toBe('Diarization failed');
-  expect(options.description).toBe(DIARIZATION_FAILED_MESSAGE);
+  expect(options.description).toBe(en.speakers.failures.failed);
 });
 
 test('configuration reasons stay silent: the user did not request the pass', async () => {
@@ -182,7 +185,10 @@ test('a failed pass for another meeting is ignored', async () => {
   await emitDiarizationUnavailable({
     meeting_id: 'meeting-b',
     status: 'failed',
-    message: DIARIZATION_FAILED_MESSAGE,
+    // D7 wire format: the code drives the UI; the prose field stays as the
+    // diagnostic fallback an older frontend build would render.
+    code: 'failed',
+    message: 'native diagnostic prose',
   });
 
   expect(toastError).not.toHaveBeenCalled();
