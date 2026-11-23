@@ -21,6 +21,7 @@ import {
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import {
+  DIARIZATION_BAND_START,
   diarizationStageMessage,
   shouldToastDiarizationUnavailable,
   showDiarizationFailure,
@@ -91,9 +92,10 @@ interface RetranscriptionError {
 const RETRANSCRIPTION_DIARIZING_STAGE = 'diarizing';
 
 /**
- * The top of the native scale, the bottom of the diarization band.
+ * The top of the native scale, the bottom of the diarization band, imported
+ * from the seam (`DIARIZATION_BAND_START`) so the dialog and the native
+ * milestones share one number.
  */
-const DIARIZATION_BAND_START = 75;
 
 /** Production seam: Tauri's `invoke`, imported lazily so importing this
  * component never touches the native bridge (the diarization seam pattern). */

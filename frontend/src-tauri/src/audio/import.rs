@@ -19,6 +19,7 @@ use super::common::{
     create_transcript_segments, split_segment_at_silence, write_transcripts_json, BatchEngine,
 };
 use super::constants::AUDIO_EXTENSIONS;
+use super::progress_scale::{transcription_progress, DIARIZATION_BAND_START, SAVING_PROGRESS};
 use super::recording_preferences::get_default_recordings_folder;
 use super::transcription::diarization_run;
 use super::transcription::diarization_service::{
@@ -746,25 +747,6 @@ async fn run_import<R: Runtime>(
     })
 }
 
-/// The import bar's scale, in one place so the milestones cannot drift:
-/// transcription owns 30..70, saving owns 70..75, and the top band
-/// 75..100 belongs to the diarization pass — fed by the frontend's shared
-/// pass state as one number, which is why no native milestone may reach
-/// past [`DIARIZATION_BAND_START`].
-const TRANSCRIPTION_BAND: (u32, u32) = (30, 70);
-const SAVING_PROGRESS: u32 = 70;
-const DIARIZATION_BAND_START: u32 = 75;
-
-/// The bar percentage for transcribing segment `index` of `count`. The band
-/// is [TRANSCRIPTION_BAND]; the last segment stays one point below the top
-/// so "saving" is visibly a new milestone.
-fn transcription_progress(index: usize, count: usize) -> u32 {
-    let (start, end) = TRANSCRIPTION_BAND;
-    let span = end - start;
-    let fraction = (index as f32 / count.max(1) as f32).min(1.0);
-    start + (fraction * (span - 1) as f32) as u32
-}
-
 /// Emit progress event
 fn emit_progress<R: Runtime>(app: &AppHandle<R>, stage: &str, progress: u32, message: &str) {
     let _ = app.emit(
@@ -1024,30 +1006,16 @@ mod tests {
         assert_eq!(segments[0].audio_end_time, Some(1.5));
     }
 
-    /// The bar's scale is a contract with the import dialog: transcription
-    /// must stay inside 30..70 (the old 30..80 read as "finished" while the
-    /// bar still owed save and diarization), saving sits at 70..75, and the
-    /// last native milestone never crosses into the diarization band.
+    /// The scale itself (the segment ramp, the save milestone, the band) is
+    /// shared and pinned once in `audio::progress_scale`. What stays here is
+    /// the import bar's own contract: its milestones are emitted *through*
+    /// that scale, so the last native value never crosses into the band the
+    /// frontend fills from the pass state.
     #[test]
-    fn the_progress_scale_leaves_the_diarization_band_to_the_pass_state() {
-        // The first segment starts the band, the last stays under its top.
-        assert_eq!(transcription_progress(0, 10), 30);
-        assert_eq!(transcription_progress(1, 10), 33);
-        assert_eq!(transcription_progress(9, 10), 65);
-        assert!(transcription_progress(10, 10) < TRANSCRIPTION_BAND.1);
-        // A single segment still reads as started, not finished.
-        assert_eq!(transcription_progress(0, 1), 30);
-        assert_eq!(transcription_progress(0, 0), 30);
-        // The whole band sweeps inside 30..70 and never touches save or
-        // diarization.
-        for count in 1..=50 {
-            for index in 0..=count {
-                let value = transcription_progress(index, count);
-                assert!((30..TRANSCRIPTION_BAND.1).contains(&value), "{index}/{count} -> {value}");
-            }
-        }
+    fn the_import_bar_stops_at_the_diarization_band() {
         assert_eq!(SAVING_PROGRESS, 70);
         assert_eq!(DIARIZATION_BAND_START, 75);
+        assert!(SAVING_PROGRESS < DIARIZATION_BAND_START);
     }
 
     #[test]

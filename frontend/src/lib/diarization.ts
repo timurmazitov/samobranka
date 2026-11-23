@@ -194,6 +194,55 @@ export interface DiarizationProgressPayload {
 }
 
 /**
+ * The bottom of the diarization band on the import/retranscription bar scale.
+ * The native milestones of both batch paths stop exactly here (see
+ * `import.rs`/`retranscription.rs`'s `DIARIZATION_BAND_START`), and the last
+ * points of the scale belong to the frontend's shared pass state, so the two
+ * sides agree on one number rather than each hard-coding it.
+ */
+export const DIARIZATION_BAND_START = 75;
+
+/** The top a pass may reach on the bar before its terminal lands. */
+const DIARIZATION_BAR_MAX_BEFORE_TERMINAL = 99;
+
+/**
+ * The band order the projection follows: the physical pass order, where the
+ * file is decoded before the diarization model loads (see `spec.md`,
+ * «Стадии прохода»). Deliberately separate from the `DiarizationStage` enum
+ * declaration order — a bar that assumed loading_model before decoding would
+ * jump forward at `decoding` and snap back at `loading_model`.
+ */
+const DIARIZATION_BAND_STAGES: readonly DiarizationStage[] = [
+  'queued',
+  'decoding',
+  'loading_model',
+  'inferring',
+  'applying_labels',
+];
+
+/**
+ * Where one stage starts inside the band. The five stages split the
+ * `DIARIZATION_BAND_START..99` range in emission order, so a later stage
+ * always reads further along the bar than any point an earlier stage can
+ * reach: a stage's own honest percentage interpolates only inside its slice
+ * (up to 4 points), never into the next stage's. That is what keeps the bar
+ * monotonic across the whole pass: a committed stage (the stage's 100%)
+ * rolls the bar forward to its slice top, and the next indeterminate stage
+ * sits at its own, higher, slice start instead of snapping the bar back —
+ * and 100 itself stays reserved for the terminal.
+ */
+function stageBandBase(stage: DiarizationStage | null): number {
+  const index = stage ? DIARIZATION_BAND_STAGES.indexOf(stage) : -1;
+  return DIARIZATION_BAND_START + Math.max(index, 0) * 5;
+}
+
+/** The part of a stage slice its honest percentage has covered (0..4). */
+function stageBandWithin(progressPercentage: number | null): number {
+  if (progressPercentage === null || progressPercentage === undefined) return 0;
+  return Math.min(4, Math.round(progressPercentage / 25));
+}
+
+/**
  * Whether the pass the store holds is still working or has died.
  *
  * `running` covers the announced stages; `failed` is the honest death of a
@@ -246,6 +295,34 @@ export function diarizationStageMessage(stage: DiarizationStage): string {
     case 'applying_labels':
       return i18n.t('speakers.stages.applying_labels');
   }
+}
+
+/**
+ * The percentage the pass indicator may show for a stage, or `null` to show
+ * the indeterminate spinner. A stage's honest checkpoint is only meaningful
+ * inside that stage; showing `loading_model 100%` mid-pass reads as a lie
+ * about the *pass* being finished, so a stage that completed its work only
+ * hands the spinner to the next stage. The exception is `applying_labels`:
+ * its last checkpoint is the pass's last work, and the terminal follows
+ * immediately, so the panel may show its percentage verbatim.
+ */
+export function passStagePercentageDisplay(state: DiarizationPassState): number | null {
+  if (state.progressPercentage === null) return null;
+  if (state.progressPercentage === 100 && state.stage !== 'applying_labels') return null;
+  return state.progressPercentage;
+}
+
+/**
+ * Where the current pass state sits on the bar scale: the stage's band base
+ * plus the share of its slice the honest percentage has covered, capped below
+ * the terminal — 99 is the top a running pass may show, and only the dialog's
+ * own complete state may read 100. A pass state without a stage (the failed
+ * indicator, which dialogs never project onto the band) reads as the band's
+ * start.
+ */
+export function diarizationBarValue(pass: DiarizationPassState): number {
+  const value = stageBandBase(pass.stage) + stageBandWithin(pass.progressPercentage);
+  return Math.min(value, DIARIZATION_BAR_MAX_BEFORE_TERMINAL);
 }
 
 /**
@@ -346,8 +423,9 @@ const PASS_TERMINAL_EVENTS = [
  * the whole store; it is attached when the first subscriber arrives and
  * dropped when the last one leaves, mirroring the injectable-bridge pattern
  * of the diarization hooks. A bridge that is not ready yet (unit tests, a
- * plain browser preview, a page-load race) only logs: the store stays
- * empty, and the next subscription retries.
+ * plain browser preview, a page-load race) only logs: the store stays empty
+ * and every later subscriber retries the attach while nothing listens, so
+ * the store recovers as soon as the bridge is there.
  */
 export class DiarizationPassStore {
   private readonly listenImpl: DiarizationPassListen;
@@ -367,6 +445,22 @@ export class DiarizationPassStore {
   private readonly subscribers = new Set<() => void>();
   private teardown: (() => void) | null = null;
   private listening = false;
+  /**
+   * Whether a bridge registration is in flight right now. Doubles as the
+   * retry gate: a subscriber that arrives while nothing listens and nothing
+   * is registering retries the bridge, so a first failed attach (the bridge
+   * not ready at page load) does not wait for an unrelated 0→1 subscriber
+   * cycle to recover.
+   */
+  private startInFlight = false;
+  /**
+   * The generation the in-flight registration was started under. When it no
+   * longer matches `generation`, a stop has landed since and that
+   * registration will abandon itself, so a fresh subscriber may start a new
+   * one instead of waiting for it (React StrictMode unmounts and remounts
+   * while the first registration is still in flight).
+   */
+  private startGeneration = 0;
   /** Bumped by every start/stop; an in-flight registration that loses the
    * race against a stop tears itself down instead of orphaning listeners. */
   private generation = 0;
@@ -399,7 +493,13 @@ export class DiarizationPassStore {
   subscribe(onChange?: () => void): () => void {
     const listener = onChange ?? (() => {});
     this.subscribers.add(listener);
-    if (this.subscribers.size === 1) this.start();
+    // Not just the first subscriber: whenever nothing listens and no live
+    // registration is in flight, a new subscriber retries the bridge. An
+    // in-flight registration whose generation a stop already invalidated is
+    // dying (it will tear itself down), so it does not block the retry.
+    if (!this.listening && (!this.startInFlight || this.startGeneration !== this.generation)) {
+      this.start();
+    }
 
     let released = false;
     return () => {
@@ -442,6 +542,31 @@ export class DiarizationPassStore {
     if (hadState || hadTerminal) this.notify();
   }
 
+  /**
+   * Records a manual run as started, before native code's first stage
+   * arrives. The store is the panel's only running truth, so the click that
+   * dispatches the command must mark the pass itself: without this the
+   * button would stay clickable, and a second click would queue a second
+   * pass, until the first `diarization-progress` event lands. The pass then
+   * behaves like any other: stages replace this record, terminals end it,
+   * and the manual run's completion clears it (see the panel).
+   */
+  markPassStarted(meetingId: string): void {
+    const current = this.states.get(meetingId);
+    this.terminals.delete(meetingId);
+    this.states.set(meetingId, {
+      meetingId,
+      // A pass that has not announced a stage yet keeps the previous one if
+      // there was any, and shows no stage sentence otherwise.
+      stage: current?.phase === 'running' ? current.stage : null,
+      progressPercentage: null,
+      message: null,
+      phase: 'running',
+      error: null,
+    });
+    this.notify();
+  }
+
   /** Releases the bridge and every subscriber (tests, app shutdown). */
   dispose(): void {
     this.subscribers.clear();
@@ -458,6 +583,14 @@ export class DiarizationPassStore {
   private start(): void {
     const generation = (this.generation += 1);
     this.listening = false;
+    this.startInFlight = true;
+    this.startGeneration = generation;
+    // Clear the in-flight flag only while this registration is still the
+    // current one; a superseded registration must not clear the flag of the
+    // start that replaced it.
+    const settle = () => {
+      if (this.startGeneration === generation) this.startInFlight = false;
+    };
     const names: string[] = [DIARIZATION_PROGRESS_EVENT, ...PASS_TERMINAL_EVENTS];
     this.settledPromise = (async () => {
       const unlisteners: Array<() => void> = [];
@@ -470,6 +603,7 @@ export class DiarizationPassStore {
           // Stopped before this beat; drop whatever partial registration
           // exists so nothing outlives the last subscriber.
           abandon();
+          settle();
           return;
         }
         try {
@@ -478,14 +612,17 @@ export class DiarizationPassStore {
           );
         } catch (error) {
           // The bridge is not ready: keep any partial registration torn down
-          // and stay silent; the next 0→1 subscription retries.
+          // and stay silent. Every later subscriber retries while nothing
+          // listens, so the store recovers as soon as the bridge is there.
           abandon();
+          settle();
           console.warn('Failed to listen for diarization progress:', error);
           return;
         }
       }
       if (generation !== this.generation) {
         abandon();
+        settle();
         return;
       }
       this.teardown = () => {
@@ -494,6 +631,7 @@ export class DiarizationPassStore {
         this.listening = false;
       };
       this.listening = true;
+      settle();
     })();
   }
 

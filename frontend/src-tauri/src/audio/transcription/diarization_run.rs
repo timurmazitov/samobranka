@@ -22,9 +22,9 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use super::diarization_service::{
     decide_diarization, diarization_progress_event, emit_pass_progress, transcript_updated_payload,
     DiarizationDecision, DiarizationPhase, DiarizationStatus,
-    DIARIZATION_FAILED_MESSAGE, DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
-    DIARIZATION_UNAVAILABLE_MESSAGE, SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
-    TRANSCRIPT_UPDATED_EVENT,
+    DIARIZATION_DEFERRED_MESSAGE, DIARIZATION_FAILED_MESSAGE,
+    DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE, DIARIZATION_UNAVAILABLE_MESSAGE,
+    SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE, TRANSCRIPT_UPDATED_EVENT,
 };
 use crate::database::repositories::meeting::MeetingsRepository;
 use crate::database::repositories::speaker;
@@ -75,8 +75,11 @@ pub enum DiarizationEvent {
         total_segments: usize,
     },
     /// The pass was attempted and failed. Configuration reasons
-    /// (`no_model`, `no_runtime`, `deferred`) are deliberately absent: the
-    /// user did not ask for those passes.
+    /// (`no_model`, `no_runtime`, `deferred`) are deliberately absent here:
+    /// the user did not ask for those passes. The one exception is a pass
+    /// that had already announced its `queued` stage and then deferred —
+    /// see [`deferred_after_queue_events`], because a surface that saw the
+    /// stage would otherwise wait for a terminal that never comes.
     Unavailable {
         meeting_id: String,
         status: DiarizationStatus,
@@ -90,17 +93,17 @@ pub enum DiarizationEvent {
 ///
 /// Native code is the source of truth for these texts; the frontend mirrors
 /// them. Missing model and missing runtime read differently on purpose so the
-/// user knows what to fix. The event itself fires only for `failed` today, but
-/// the `NoModel`/`NoRuntime` arms stay because the spec makes native code the
-/// source of truth for those texts and requires the frontend to mirror them;
-/// the mapping is pinned by tests.
+/// user knows what to fix. The event itself fires for `failed` and for a pass
+/// that deferred after announcing `queued` (see
+/// [`deferred_after_queue_events`]); the `NoModel`/`NoRuntime` arms stay
+/// because the spec makes native code the source of truth for those texts and
+/// requires the frontend to mirror them; the mapping is pinned by tests.
 pub fn unavailable_message(status: DiarizationStatus) -> &'static str {
     match status {
         DiarizationStatus::NoRuntime => DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
         DiarizationStatus::NoModel => DIARIZATION_UNAVAILABLE_MESSAGE,
-        DiarizationStatus::Failed | DiarizationStatus::Ran | DiarizationStatus::Deferred => {
-            DIARIZATION_FAILED_MESSAGE
-        }
+        DiarizationStatus::Deferred => DIARIZATION_DEFERRED_MESSAGE,
+        DiarizationStatus::Failed | DiarizationStatus::Ran => DIARIZATION_FAILED_MESSAGE,
     }
 }
 
@@ -136,6 +139,32 @@ pub fn diarization_events(
         }
     }
     events
+}
+
+/// The terminal a pass owes when it deferred *after* announcing `queued`.
+///
+/// The general `deferred` config reason stays silent (see
+/// [`diarization_events`]): a pass the decision postponed before it spoke
+/// owes the UI nothing. But once a surface has seen `queued` it is waiting on
+/// a terminal, and the under-lock recording re-check can still answer
+/// `deferred` — without this terminal the bar/indicator would hang in
+/// running forever. The payload reuses the `diarization-unavailable` channel
+/// with the `deferred` status; the frontend ends a non-`failed` payload on
+/// that channel without a toast, so this reads as an honest, silent stop.
+///
+/// Pure so the rule is unit-tested beside the silence rule it complements.
+pub fn deferred_after_queue_events(
+    meeting_id: &str,
+    announced_queued: bool,
+) -> Vec<DiarizationEvent> {
+    if !announced_queued {
+        return Vec::new();
+    }
+    vec![DiarizationEvent::Unavailable {
+        meeting_id: meeting_id.to_string(),
+        status: DiarizationStatus::Deferred,
+        error: None,
+    }]
 }
 
 /// What happened to a pass that ran after the batch job had already finished.
@@ -353,6 +382,29 @@ async fn rewrite_transcripts_json(folder: &Path, segments: Vec<crate::api::Trans
     }
 }
 
+/// Announces the deferred terminal for a pass that had already announced
+/// `queued` and returns the in-band result. Separate from
+/// [`diarize_saved_meeting`] so the announce-and-return step is testable
+/// against the mock app without a model catalog or a recording to race.
+fn deferred_after_queued<R: Runtime>(
+    app: &AppHandle<R>,
+    meeting_id: &str,
+    total_segments: usize,
+) -> SavedMeetingDiarization {
+    let result = SavedMeetingDiarization {
+        meeting_id: meeting_id.to_string(),
+        status: DiarizationStatus::Deferred,
+        labeled_segments: 0,
+        total_segments,
+        error: None,
+    };
+    // The pass already announced `queued`, so this `deferred` is not the
+    // silent config reason: it must land as a terminal or the waiting
+    // surface hangs in running forever.
+    emit_events(app, &deferred_after_queue_events(meeting_id, true));
+    result
+}
+
 /// Diarizes a saved meeting: decide, run one pass over the meeting's audio
 /// file, persist the labels with the speaker-name recount, and emit the
 /// native events.
@@ -426,6 +478,8 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 
     // The queue stage belongs to a pass that will actually run, so it is
     // announced here — before the lock, while a second pass still holds it.
+    // From this beat on, every early return owes a terminal: a surface that
+    // saw `queued` is waiting for one.
     emit_pass_progress(app, meeting_id, DiarizationPhase::Queued);
 
     // One pass at a time. The guard is held across the recording re-check and
@@ -437,15 +491,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
     // model load that follows must not compete with an active recording.
     if crate::audio::recording_commands::is_recording().await {
         info!("Diarization of meeting {meeting_id} deferred: a recording started while the pass was queued");
-        let result = SavedMeetingDiarization {
-            meeting_id: meeting_id.to_string(),
-            status: DiarizationStatus::Deferred,
-            labeled_segments: 0,
-            total_segments,
-            error: None,
-        };
-        emit_events(app, &diarization_events(&result, false));
-        return Ok(result);
+        return Ok(deferred_after_queued(app, meeting_id, total_segments));
     }
 
     let folder = match meeting.folder_path.as_deref().map(PathBuf::from) {
@@ -718,6 +764,75 @@ mod tests {
                 "status: {status:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_pass_that_never_announced_queued_defers_in_silence() {
+        // The decision-time `deferred` (a recording was already running when
+        // the user asked for the pass) never showed a stage, so it owes no
+        // terminal either: the silence rule of `diarization_events` still
+        // covers it.
+        assert_eq!(deferred_after_queue_events("meeting-1", false), Vec::new());
+    }
+
+    #[test]
+    fn a_queued_pass_that_defers_owes_exactly_one_deferred_terminal() {
+        // The race the silence rule cannot cover: the pass announced `queued`
+        // and only then found a recording under the lock. A surface watching
+        // the stage waits on a terminal, so exactly one must land.
+        assert_eq!(
+            deferred_after_queue_events("meeting-1", true),
+            vec![DiarizationEvent::Unavailable {
+                meeting_id: "meeting-1".to_string(),
+                status: DiarizationStatus::Deferred,
+                error: None,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_queued_then_deferred_terminal_emits_one_diarization_unavailable() {
+        // The emitting half of the race fix, on the mock app: the terminal
+        // lands on the existing `diarization-unavailable` channel with the
+        // `deferred` status and the deferred sentence, and nothing else. The
+        // frontend store already ends a running pass on any non-failed
+        // payload of this channel (pinned in
+        // `tests/lib/diarization-pass-state.test.ts`).
+        let (_pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = deferred_after_queued(app.handle(), "meeting-1", 2);
+
+        assert_eq!(result.status, DiarizationStatus::Deferred);
+        assert_eq!(result.total_segments, 2);
+        assert_eq!(
+            recorded(&recorded_events),
+            vec![(
+                DIARIZATION_UNAVAILABLE_EVENT.to_string(),
+                serde_json::json!({
+                    "meeting_id": "meeting-1",
+                    "status": "deferred",
+                    "reason": null,
+                    "message": DIARIZATION_DEFERRED_MESSAGE,
+                })
+            )],
+            "queued-then-deferred must emit exactly one terminal"
+        );
+    }
+
+    #[test]
+    fn a_deferred_pass_explains_itself_as_a_postponement_not_a_failure() {
+        // The under-lock race shows the user why the pass stopped: a
+        // recording, not a breakdown. A failure would send them looking for
+        // a broken engine.
+        assert_eq!(
+            unavailable_message(DiarizationStatus::Deferred),
+            DIARIZATION_DEFERRED_MESSAGE
+        );
+        assert_ne!(
+            unavailable_message(DiarizationStatus::Deferred),
+            unavailable_message(DiarizationStatus::Failed)
+        );
     }
 
     #[test]

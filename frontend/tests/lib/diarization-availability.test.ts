@@ -145,19 +145,53 @@ describe('importBarPercentage', () => {
     expect(importBarPercentage(undefined, null)).toBe(0);
   });
 
-  test('an indeterminate stage sits at the start of the band', () => {
-    // Honest "no number": the bar does not invent a percentage the engine
-    // never reported.
-    expect(importBarPercentage(40, pass())).toBe(75);
+  test('each stage sits at the start of its own band slice', () => {
+    // The five stages split 75..99 in emission order (decoding runs before
+    // the model load — the physical pass order), so a later stage always
+    // reads further along the bar than any point an earlier stage can reach.
+    expect(importBarPercentage(75, pass({ stage: 'queued' }))).toBe(75);
+    expect(importBarPercentage(75, pass({ stage: 'decoding' }))).toBe(80);
+    expect(importBarPercentage(75, pass({ stage: 'loading_model' }))).toBe(85);
+    expect(importBarPercentage(75, pass({ stage: 'inferring' }))).toBe(90);
+    expect(importBarPercentage(75, pass({ stage: 'applying_labels' }))).toBe(95);
   });
 
-  test('an honest pass percentage maps into 75..100', () => {
-    expect(importBarPercentage(40, pass({ progressPercentage: 0 }))).toBe(75);
-    expect(importBarPercentage(40, pass({ progressPercentage: 50 }))).toBe(88);
-    expect(importBarPercentage(40, pass({ progressPercentage: 100 }))).toBe(100);
+  test('a stage percentage interpolates inside its own slice, never into the next stage', () => {
+    expect(importBarPercentage(75, pass({ stage: 'loading_model', progressPercentage: 0 }))).toBe(85);
+    expect(importBarPercentage(75, pass({ stage: 'loading_model', progressPercentage: 50 }))).toBe(87);
+    // The committed checkpoint tops the stage's slice at 89 — it does not
+    // reach 100, and the indeterminate stage that follows (90) only moves
+    // the bar forward: the sawtooth the old 75 + pct/4 mapping produced is
+    // gone.
+    expect(importBarPercentage(75, pass({ stage: 'loading_model', progressPercentage: 100 }))).toBe(89);
+    expect(importBarPercentage(75, pass({ stage: 'inferring' }))).toBe(90);
   });
 
-  test('the bar never exceeds 100', () => {
-    expect(importBarPercentage(40, pass({ progressPercentage: 999 }))).toBe(100);
+  test('the bar never reaches 100 before the terminal', () => {
+    // 99 is the top a running pass shows, even at the last stage's final
+    // checkpoint; only the dialog's own complete state (no pass state) reads
+    // 100. A wild percentage cannot lift it either (the reducer clamps it to
+    // indeterminate, and the cap holds regardless).
+    expect(importBarPercentage(75, pass({ stage: 'applying_labels', progressPercentage: 100 }))).toBe(99);
+    expect(importBarPercentage(75, pass({ stage: 'applying_labels', progressPercentage: 999 }))).toBeLessThan(100);
+  });
+
+  test('the whole honest pass sequence is monotonic', () => {
+    const sequence: Array<Partial<DiarizationPassState>> = [
+      { stage: 'queued' },
+      { stage: 'decoding' },
+      { stage: 'loading_model', progressPercentage: 0 },
+      { stage: 'loading_model', progressPercentage: 100 },
+      { stage: 'inferring' },
+      { stage: 'applying_labels', progressPercentage: 0 },
+      { stage: 'applying_labels', progressPercentage: 100 },
+    ];
+    let previous = 0;
+    for (const overrides of sequence) {
+      const value = importBarPercentage(75, pass(overrides));
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
+    expect(previous).toBe(99);
   });
 });

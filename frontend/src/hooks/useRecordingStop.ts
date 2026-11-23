@@ -333,8 +333,7 @@ export function useRecordingStop(
           // only while the shared pass state says the pass is really working;
           // a pass that never started (or died) completes the stop without
           // ever showing the stage, so the stop flow cannot hang on it.
-          const diarizationStage = await applyLiveDiarization(meetingId);
-          console.log('Diarization stage of the stop flow:', diarizationStage);
+          await applyLiveDiarization(meetingId);
 
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');

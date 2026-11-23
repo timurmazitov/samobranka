@@ -14,6 +14,12 @@
 
 ## Comments
 
+Порядок стадий: физически декод файла идёт до загрузки модели (`diarization_service.rs`
+эмитит `Decoding` до `ModelLoadStarted`), поэтому фактический порядок прохода —
+`queued → decoding → loading_model → inferring → applying_labels`; буллет «Стадии
+прохода» в спеке обновлён под него. Эмиссии честные (каждая — там, где работа реально
+идёт), код не перестраивался.
+
 Имплементация (тикент 02), ветка `feat/dp-02`:
 
 - Бэкенд: `DiarizationStage` / `DiarizationPhase` / `DiarizationProgressEvent` и
