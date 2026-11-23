@@ -22,9 +22,33 @@ use super::ffmpeg::find_ffmpeg_path;
 /// Extensions requiring ffmpeg pre-conversion (Symphonia lacks these demuxers/codecs)
 const FFMPEG_ONLY_EXTENSIONS: &[&str] = &["mkv", "webm", "wma"];
 
+/// One progress report from decode/resample (native-i18n spec D7). The
+/// English `message` stays the diagnostic fallback; `code` (+ optional
+/// `params`) is what the frontend renders through its catalog — these
+/// reports only ever reach the frontend through `import-progress`, so the
+/// codes resolve under `importAudio.progress.<code>`.
+#[derive(Debug, Clone)]
+pub struct DecodeProgress {
+    /// Raw 0-100 progress of this decode/resample step (the caller maps it
+    /// into its overall bar).
+    pub percent: u32,
+    /// English fallback prose, unchanged from the pre-i18n payload.
+    pub message: String,
+    /// Stable i18n identifier (see the `CODE_*` constants).
+    pub code: &'static str,
+    /// Interpolation values for the frontend key (percent).
+    pub params: Option<serde_json::Value>,
+}
+
+/// Codes for the frontend pinning test (tests/lib/native-progress-i18n).
+const CODE_DECODING_PERCENT: &str = "decoding_percent";
+const CODE_DECODING_COMPLETE: &str = "decoding_complete";
+const CODE_FFMPEG_CONVERTING: &str = "ffmpeg_converting";
+const CODE_FFMPEG_COMPLETE: &str = "ffmpeg_complete";
+const CODE_RESAMPLING_PERCENT: &str = "resampling_percent";
+
 /// Progress callback for long-running operations
-/// Returns current progress (0-100) and a message
-pub type ProgressCallback = Box<dyn Fn(u32, &str) + Send>;
+pub type ProgressCallback = Box<dyn Fn(&DecodeProgress) + Send>;
 
 /// Decoded audio data from a file
 #[derive(Debug, Clone)]
@@ -212,10 +236,14 @@ fn chunked_resample_with_progress(
                     progress_pct
                 );
             }
-            callback(
-                progress_pct as u32,
-                &format!("Resampling audio: {:.0}%", progress_pct),
-            );
+            callback(&DecodeProgress {
+                percent: progress_pct as u32,
+                message: format!("Resampling audio: {:.0}%", progress_pct),
+                code: CODE_RESAMPLING_PERCENT,
+                // Same rounding as the fallback prose (`{:.0}`), so the
+                // localized and English renderings never disagree.
+                params: Some(serde_json::json!({ "percent": progress_pct.round() as u32 })),
+            });
         }
     }
 
@@ -309,7 +337,12 @@ fn convert_to_wav_with_ffmpeg(
     );
 
     if let Some(cb) = progress_callback {
-        cb(0, "Converting audio format with FFmpeg...");
+        cb(&DecodeProgress {
+            percent: 0,
+            message: "Converting audio format with FFmpeg...".to_string(),
+            code: CODE_FFMPEG_CONVERTING,
+            params: None,
+        });
     }
 
     let input_str = input_path
@@ -377,7 +410,12 @@ fn convert_to_wav_with_ffmpeg(
     }
 
     if let Some(cb) = progress_callback {
-        cb(100, "FFmpeg conversion complete");
+        cb(&DecodeProgress {
+            percent: 100,
+            message: "FFmpeg conversion complete".to_string(),
+            code: CODE_FFMPEG_COMPLETE,
+            params: None,
+        });
     }
 
     info!(
@@ -551,7 +589,12 @@ pub fn decode_audio_file_with_progress(
                     let current_progress = ((all_samples.len() as f64 / expected as f64) * 100.0) as u32;
                     if current_progress >= last_progress + 10 && current_progress <= 100 {
                         last_progress = current_progress;
-                        callback(current_progress, &format!("Decoding audio: {}%", current_progress));
+                        callback(&DecodeProgress {
+                            percent: current_progress,
+                            message: format!("Decoding audio: {}%", current_progress),
+                            code: CODE_DECODING_PERCENT,
+                            params: Some(serde_json::json!({ "percent": current_progress })),
+                        });
                     }
                 }
             }
@@ -564,7 +607,12 @@ pub fn decode_audio_file_with_progress(
 
     // Ensure we report 100% completion
     if let Some(callback) = &progress_callback {
-        callback(100, "Decoding complete");
+        callback(&DecodeProgress {
+            percent: 100,
+            message: "Decoding complete".to_string(),
+            code: CODE_DECODING_COMPLETE,
+            params: None,
+        });
     }
 
     if all_samples.is_empty() {

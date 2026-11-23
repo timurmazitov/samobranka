@@ -31,6 +31,9 @@ export interface ImportProgress {
   stage: string;
   progress_percentage: number;
   message: string;
+  /** Stable i18n code added by the native side (spec D7); see `lib/native-progress`. */
+  code?: string;
+  params?: Record<string, unknown>;
 }
 
 export interface ImportResult {

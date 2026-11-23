@@ -85,7 +85,33 @@ pub struct ImportProgress {
     pub stage: String, // "copying", "decoding", "vad", "transcribing", "saving"
     pub progress_percentage: u32,
     pub message: String,
+    /// Stable i18n identifier the frontend resolves through
+    /// `importAudio.progress.<code>` (native-i18n spec D7). `None` keeps the
+    /// frontend on the English `message` fallback, so un-coded emissions are
+    /// byte-compatible with the pre-i18n payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Interpolation values for the frontend key (percent, counts, duration).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
+
+/// Codes for the `import-progress` payload (native-i18n spec D7). The value
+/// is the frontend catalog key suffix (`importAudio.progress.<code>`); the
+/// frontend pinning test extracts these constants and fails if a catalog key
+/// goes missing in either locale.
+const CODE_CREATING_FOLDER: &str = "creating_folder";
+const CODE_COPYING_FILE: &str = "copying_file";
+const CODE_DECODING_FILE: &str = "decoding_file";
+const CODE_CONVERTING_FORMAT: &str = "converting_format";
+const CODE_DETECTING_SEGMENTS: &str = "detecting_segments";
+const CODE_DETECTING_SEGMENTS_PROGRESS: &str = "detecting_segments_progress";
+const CODE_LOADING_ENGINE: &str = "loading_engine";
+const CODE_TRANSCRIBING_SEGMENT: &str = "transcribing_segment";
+const CODE_CREATING_MEETING: &str = "creating_meeting";
+const CODE_WRITING_FILES: &str = "writing_files";
+/// Reuses the existing `importAudio.stages.complete` key on the frontend.
+const CODE_COMPLETE: &str = "complete";
 
 /// Result of import
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,7 +347,14 @@ async fn run_import<R: Runtime>(
     // Determine which provider to use (defaults to transcribe.cpp)
     let engine_kind = BatchEngine::from_provider_name(provider.as_deref());
 
-    emit_progress(&app, "copying", 5, "Creating meeting folder...");
+    emit_progress(
+        &app,
+        "copying",
+        5,
+        "Creating meeting folder...",
+        CODE_CREATING_FOLDER,
+        None,
+    );
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -333,7 +366,14 @@ async fn run_import<R: Runtime>(
     let meeting_folder = create_meeting_folder(&base_folder, &title, false)?;
 
     // Copy audio file to meeting folder
-    emit_progress(&app, "copying", 10, "Copying audio file...");
+    emit_progress(
+        &app,
+        "copying",
+        10,
+        "Copying audio file...",
+        CODE_COPYING_FILE,
+        None,
+    );
 
     let dest_filename = format!(
         "audio.{}",
@@ -357,14 +397,30 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "decoding", 15, "Decoding audio file...");
+    emit_progress(
+        &app,
+        "decoding",
+        15,
+        "Decoding audio file...",
+        CODE_DECODING_FILE,
+        None,
+    );
 
-    // Decode the audio file with progress updates
+    // Decode the audio file with progress updates. The decoder reports a
+    // coded progress struct (native-i18n spec D7); import forwards it under
+    // its own overall percentage.
     let app_for_decode = app.clone();
-    let decode_progress = Box::new(move |progress: u32, msg: &str| {
+    let decode_progress = Box::new(move |progress: &crate::audio::decoder::DecodeProgress| {
         // Map decode progress: 15% + (progress * 0.05) to go from 15% to 20%
-        let overall_progress = 15 + ((progress as f32 * 0.05) as u32);
-        emit_progress(&app_for_decode, "decoding", overall_progress, msg);
+        let overall_progress = 15 + ((progress.percent as f32 * 0.05) as u32);
+        emit_progress(
+            &app_for_decode,
+            "decoding",
+            overall_progress,
+            &progress.message,
+            progress.code,
+            progress.params.clone(),
+        );
     });
 
     let path_for_decode = dest_path.clone();
@@ -380,7 +436,14 @@ async fn run_import<R: Runtime>(
         duration_seconds, decoded.sample_rate, decoded.channels
     );
 
-    emit_progress(&app, "resampling", 20, "Converting audio format...");
+    emit_progress(
+        &app,
+        "resampling",
+        20,
+        "Converting audio format...",
+        CODE_CONVERTING_FORMAT,
+        None,
+    );
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -388,12 +451,21 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    // Convert to 16kHz mono format with progress updates
+    // Convert to 16kHz mono format with progress updates. The resampler
+    // reports a coded progress struct (native-i18n spec D7); import forwards
+    // it under its own overall percentage.
     let app_for_resample = app.clone();
-    let resample_progress = Box::new(move |progress: u32, msg: &str| {
+    let resample_progress = Box::new(move |progress: &crate::audio::decoder::DecodeProgress| {
         // Map resample progress: 20% + (progress * 0.05) to go from 20% to 25%
-        let overall_progress = 20 + ((progress as f32 * 0.05) as u32);
-        emit_progress(&app_for_resample, "resampling", overall_progress, msg);
+        let overall_progress = 20 + ((progress.percent as f32 * 0.05) as u32);
+        emit_progress(
+            &app_for_resample,
+            "resampling",
+            overall_progress,
+            &progress.message,
+            progress.code,
+            progress.params.clone(),
+        );
     });
 
     let audio_samples = tokio::task::spawn_blocking(move || {
@@ -406,7 +478,14 @@ async fn run_import<R: Runtime>(
         audio_samples.len()
     );
 
-    emit_progress(&app, "vad", 25, "Detecting speech segments...");
+    emit_progress(
+        &app,
+        "vad",
+        25,
+        "Detecting speech segments...",
+        CODE_DETECTING_SEGMENTS,
+        None,
+    );
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -435,6 +514,11 @@ async fn run_import<R: Runtime>(
                         "Detecting speech segments... {}% ({} found)",
                         vad_progress, segments_found
                     ),
+                    CODE_DETECTING_SEGMENTS_PROGRESS,
+                    Some(serde_json::json!({
+                        "percent": vad_progress,
+                        "found": segments_found,
+                    })),
                 );
                 !IMPORT_CANCELLED.load(Ordering::SeqCst)
             },
@@ -498,7 +582,14 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "transcribing", 30, "Loading transcription engine...");
+    emit_progress(
+        &app,
+        "transcribing",
+        30,
+        "Loading transcription engine...",
+        CODE_LOADING_ENGINE,
+        None,
+    );
 
     // Exact model selection with no fallback: a batch request naming a model
     // the user picked in the dialog — or falling back to the configured
@@ -571,6 +662,12 @@ async fn run_import<R: Runtime>(
                 processable_count,
                 segment_duration_sec
             ),
+            CODE_TRANSCRIBING_SEGMENT,
+            Some(serde_json::json!({
+                "current": i + 1,
+                "total": processable_count,
+                "duration_sec": segment_duration_sec,
+            })),
         );
 
         // Skip very short segments
@@ -656,7 +753,14 @@ async fn run_import<R: Runtime>(
 
     // Saving owns 70..75: the last five points before the band the frontend
     // holds for diarization (75..100, fed by the shared pass state).
-    emit_progress(&app, "saving", SAVING_PROGRESS, "Creating meeting...");
+    emit_progress(
+        &app,
+        "saving",
+        SAVING_PROGRESS,
+        "Creating meeting...",
+        CODE_CREATING_MEETING,
+        None,
+    );
 
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
@@ -689,7 +793,14 @@ async fn run_import<R: Runtime>(
     }
 
     // Write transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, "saving", DIARIZATION_BAND_START, "Writing transcript files...");
+    emit_progress(
+        &app,
+        "saving",
+        DIARIZATION_BAND_START,
+        "Writing transcript files...",
+        CODE_WRITING_FILES,
+        None,
+    );
 
     if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -710,7 +821,14 @@ async fn run_import<R: Runtime>(
     // top of the save band. The 75..100 band belongs to the diarization pass
     // and is fed by the frontend's shared pass state (one number), so a
     // native "100" here would make the bar lie about the work still running.
-    emit_progress(&app, "complete", DIARIZATION_BAND_START, "Import complete");
+    emit_progress(
+        &app,
+        "complete",
+        DIARIZATION_BAND_START,
+        "Import complete",
+        CODE_COMPLETE,
+        None,
+    );
 
     // Diarization is a second stage over the saved meeting: the transcript is
     // already committed and the import is already complete for the user. There
@@ -727,14 +845,25 @@ async fn run_import<R: Runtime>(
     })
 }
 
-/// Emit progress event
-fn emit_progress<R: Runtime>(app: &AppHandle<R>, stage: &str, progress: u32, message: &str) {
+/// Emit progress event (native-i18n spec D7): the English `message` stays the
+/// diagnostic fallback, `code` (+ optional `params`) is what the frontend
+/// renders through `importAudio.progress.<code>`.
+fn emit_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    stage: &str,
+    progress: u32,
+    message: &str,
+    code: &str,
+    params: Option<serde_json::Value>,
+) {
     let _ = app.emit(
         "import-progress",
         ImportProgress {
             stage: stage.to_string(),
             progress_percentage: progress,
             message: message.to_string(),
+            code: Some(code.to_string()),
+            params,
         },
     );
 }
@@ -996,6 +1125,50 @@ mod tests {
         assert_eq!(SAVING_PROGRESS, 70);
         assert_eq!(DIARIZATION_BAND_START, 75);
         assert!(SAVING_PROGRESS < DIARIZATION_BAND_START);
+    }
+
+    /// Spec D7: `code` (+ `params`) travel alongside the English `message` so
+    /// the frontend renders `importAudio.progress.<code>`. The fields are
+    /// additive: a payload without them must serialize exactly as before, or
+    /// every old listener sees a shape change.
+    #[test]
+    fn import_progress_carries_code_and_params_additively() {
+        let with_code = serde_json::to_value(ImportProgress {
+            stage: "transcribing".to_string(),
+            progress_percentage: 42,
+            message: "Transcribing segment 2 of 5 (1.2s)...".to_string(),
+            code: Some("transcribing_segment".to_string()),
+            params: Some(serde_json::json!({
+                "current": 2,
+                "total": 5,
+                "duration_sec": 1.2,
+            })),
+        })
+        .unwrap();
+        assert_eq!(with_code["stage"], "transcribing");
+        assert_eq!(with_code["progress_percentage"], 42);
+        assert_eq!(
+            with_code["message"], "Transcribing segment 2 of 5 (1.2s)...",
+            "the English prose stays as the diagnostic fallback"
+        );
+        assert_eq!(with_code["code"], "transcribing_segment");
+        assert_eq!(with_code["params"]["current"], 2);
+        assert_eq!(with_code["params"]["total"], 5);
+        assert_eq!(with_code["params"]["duration_sec"], 1.2);
+
+        let without_code = serde_json::to_value(ImportProgress {
+            stage: "decoding".to_string(),
+            progress_percentage: 15,
+            message: "Decoding audio file...".to_string(),
+            code: None,
+            params: None,
+        })
+        .unwrap();
+        assert!(
+            without_code.get("code").is_none(),
+            "an un-coded payload keeps the pre-i18n shape"
+        );
+        assert!(without_code.get("params").is_none());
     }
 
     #[test]
