@@ -23,7 +23,7 @@ use super::progress_scale::{transcription_progress, DIARIZATION_BAND_START, SAVI
 use super::recording_preferences::get_default_recordings_folder;
 use super::transcription::diarization_run;
 use super::transcription::diarization_service::{
-    SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
+    SPEAKER_NAMES_RESET_CODE, SPEAKER_NAMES_RESET_EVENT,
 };
 use super::transcription::engine::get_or_init_transcribe_cpp_provider_for_batch;
 use super::transcription::provider::TranscriptionProvider;
@@ -787,7 +787,7 @@ async fn run_import<R: Runtime>(
             SPEAKER_NAMES_RESET_EVENT,
             serde_json::json!({
                 "meeting_id": meeting_id,
-                "message": SPEAKER_NAMES_RESET_MESSAGE,
+                "code": SPEAKER_NAMES_RESET_CODE,
             }),
         );
     }

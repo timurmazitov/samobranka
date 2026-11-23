@@ -346,7 +346,7 @@ export function RetranscribeDialog({
         (event) => {
           if (event.payload.meeting_id && event.payload.meeting_id !== meetingId) return;
           if (!shouldToastDiarizationUnavailable(event.payload.status)) return;
-          showDiarizationFailure(toast, event.payload.message);
+          showDiarizationFailure(toast, event.payload);
         }
       );
       if (cleanedUpRef.current) {

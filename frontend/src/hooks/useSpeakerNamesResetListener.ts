@@ -4,7 +4,7 @@ import i18n from '@/i18n';
 
 import {
   SPEAKER_NAMES_RESET_EVENT,
-  SPEAKER_NAMES_RESET_HINT,
+  diarizationFailureDescription,
   type SpeakerNamesResetPayload,
 } from '@/lib/diarization';
 
@@ -60,7 +60,14 @@ export function useSpeakerNamesResetListener(
         // id is always present; the optional check stays for an older payload.
         if (event.payload.meeting_id && event.payload.meeting_id !== meetingId) return;
         toast.info(i18n.t('toasts.speakerNames.reset'), {
-          description: event.payload.message ?? SPEAKER_NAMES_RESET_HINT,
+          // The code decides the sentence (spec D8); the payload's prose is
+          // the fallback for a code this build does not know (spec D7), and
+          // neither leaves the description empty.
+          description: diarizationFailureDescription(
+            event.payload.code,
+            event.payload.message,
+            'speakers.failures.reset',
+          ),
         });
         onResetRef.current();
       });

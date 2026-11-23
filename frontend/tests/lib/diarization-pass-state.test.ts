@@ -137,10 +137,10 @@ describe('applyDiarizationFailure (pure reducer)', () => {
   test('a failure carries the native message when there is no reason', () => {
     const next = applyDiarizationFailure(
       applyDiarizationProgress(null, progress({ stage: 'decoding' })),
-      failure({ message: 'Speaker labels were skipped because diarization failed.' }),
+      failure({ message: 'native diagnostic prose' }),
     );
 
-    expect(next?.error).toBe('Speaker labels were skipped because diarization failed.');
+    expect(next?.error).toBe('native diagnostic prose');
   });
 
   test('a failure with neither reason nor message keeps the pass failed but reasonless', () => {
@@ -276,7 +276,7 @@ describe('DiarizationPassStore', () => {
       meeting_id: 'meeting-a',
       status: 'failed',
       reason: 'engine exploded',
-      message: 'Speaker labels were skipped because diarization failed.',
+      message: 'native diagnostic prose',
     });
 
     expect(store.getState('meeting-a')).toEqual({
