@@ -91,14 +91,16 @@ value is what makes them agree, so the absent-key test matters (spec D11).
     `resolveAppLanguage` and `setLanguage` emits the event (dynamic import
     guarded on `__TAURI_INTERNALS__`, same pattern as `app-window-title.ts`;
     emitted even when the store save fails).
-  - Ran: `cargo test -p samobranka --lib` — 764 pass / 0 fail / 7 ignored
+  - Ran (after merging the `feat/native-i18n` tip into this branch):
+    `cargo test -p samobranka --lib` — 765 pass / 0 fail / 7 ignored
     (`CARGO_TARGET_DIR=/tmp/opencode/target-ni-02`, Linux x86_64);
     `cargo clippy -p samobranka --lib` — no new warnings in the touched
     files. `bun test` per file: `app-language-parity` 4 pass,
     `language-emit` 2 pass, `language-window-title` 2 pass,
     `i18n-parity` 5 pass, `i18n-usage` 3 pass. Full `bun test tests/`:
-    540 pass / 9 fail — the same 9 known cross-file `mock.module` leaks as
-    the stashed baseline run (534 pass / 9 fail; +6 are the new tests).
+    560 pass / 9 fail — the same 9 known cross-file `mock.module` leaks as
+    the pre-change baseline run (identical failure list), the additional
+    passes being this ticket's and the merged tickets' new tests.
     `tsc --noEmit`: only the pre-existing `stage-transcribe-native.test.ts`
     TS7053 baseline error.
   - Untested: the running app (`tauri:dev` not started per the consolidated
