@@ -43,6 +43,7 @@ pub mod config;
 pub mod console_utils;
 pub mod database;
 pub mod doodle;
+pub mod error_codes;
 pub mod export;
 pub mod notifications;
 pub mod ollama;

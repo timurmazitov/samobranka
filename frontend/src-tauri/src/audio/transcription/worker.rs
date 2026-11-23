@@ -189,12 +189,24 @@ pub fn start_transcription_task<R: Runtime>(
             Ok(engine) => engine,
             Err(e) => {
                 error!("Failed to initialize transcription engine");
-                let _ = app.emit("transcription-error", serde_json::json!({
-                    "error": e,
-                    "userMessage": "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
-                    "actionable": true,
-                    "phase": "active"
-                }));
+                // Prefer the concrete failing stage's code (e.g. a model that
+                // is still downloading) so the modal names the real problem;
+                // the generic init-failure code covers codeless internal bugs.
+                let (code, params) = match (e.code, e.params) {
+                    (Some(code), params) => (Some(code), params),
+                    (None, _) => (Some(crate::error_codes::TRANSCRIPTION_ENGINE_INIT_FAILED), None),
+                };
+                let _ = app.emit(
+                    "transcription-error",
+                    crate::error_codes::transcription_error_payload(
+                        e.message,
+                        "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
+                        true,
+                        "active",
+                        code,
+                        params,
+                    ),
+                );
                 return;
             }
         };
@@ -420,14 +432,17 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                     result.is_partial,
                 )),
                 Err(error) => {
+                    let coded = crate::error_codes::CodedError::from(error.clone());
                     let _ = app.emit(
                         "transcription-error",
-                        &serde_json::json!({
-                            "error": error.to_string(),
-                            "userMessage": format!("Transcription failed: {}", error),
-                            "actionable": false,
-                            "phase": "active"
-                        }),
+                        crate::error_codes::transcription_error_payload(
+                            coded.message.clone(),
+                            format!("Transcription failed: {}", coded.message),
+                            false,
+                            "active",
+                            coded.code,
+                            coded.params,
+                        ),
                     );
                     Err(error)
                 }

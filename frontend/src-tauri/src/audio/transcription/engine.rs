@@ -3,6 +3,10 @@
 // TranscriptionEngine enum and model initialization/validation logic.
 
 use super::provider::TranscriptionProvider;
+use crate::error_codes::{
+    error_params, CodedError, TRANSCRIPTION_MODEL_DISCOVERY_FAILED,
+    TRANSCRIPTION_MODEL_LOAD_FAILED, TRANSCRIPTION_MODEL_MANAGER_UNINITIALIZED,
+};
 use log::{info, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
@@ -54,9 +58,14 @@ impl TranscriptionEngine {
 // ============================================================================
 
 /// Validate that a transcription model is ready before starting recording
+///
+/// The `Err` carries the stable error code of the failing stage (native-i18n
+/// spec D7) beside the English prose so the recording-start emitters can add
+/// `code`/`params` to the `transcription-error` payload without re-parsing
+/// text; callers that need the old `String` use `.message`.
 pub async fn validate_transcription_model_ready<R: Runtime>(
     app: &AppHandle<R>,
-) -> Result<(), String> {
+) -> Result<(), crate::error_codes::CodedError> {
     // Check transcript configuration to determine which engine to validate
     let config =
         match crate::api::api::api_get_transcript_config(app.clone(), app.clone().state(), None)
@@ -148,9 +157,12 @@ pub async fn validate_transcription_model_ready<R: Runtime>(
 }
 
 /// Get or initialize the appropriate transcription engine based on provider configuration
+///
+/// Failures carry the stable code of the failing stage beside the prose
+/// (native-i18n spec D7) — see [`crate::error_codes`].
 pub async fn get_or_init_transcription_engine<R: Runtime>(
     app: &AppHandle<R>,
-) -> Result<TranscriptionEngine, String> {
+) -> Result<TranscriptionEngine, CodedError> {
     // Get provider configuration from API
     let config =
         match crate::api::api::api_get_transcript_config(app.clone(), app.clone().state(), None)
@@ -221,7 +233,7 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
 /// setup, and a native load/session error is reported instead of panicking.
 pub async fn get_or_init_transcribe_cpp_provider<R: Runtime>(
     app: &AppHandle<R>,
-) -> Result<Arc<dyn TranscriptionProvider>, String> {
+) -> Result<Arc<dyn TranscriptionProvider>, CodedError> {
     get_or_init_transcribe_cpp_provider_with_model(app, None).await
 }
 
@@ -241,7 +253,7 @@ pub async fn get_or_init_transcribe_cpp_provider<R: Runtime>(
 pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
     app: &AppHandle<R>,
     requested_model: Option<String>,
-) -> Result<Arc<dyn TranscriptionProvider>, String> {
+) -> Result<Arc<dyn TranscriptionProvider>, CodedError> {
     use tauri::Emitter;
 
     let mode = saved_transcribe_cpp_compute_mode(app).await;
@@ -299,10 +311,12 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
                 }
             }
             Ok(Some(config)) => {
-                return Err(format!(
+                // Internal bug (provider mismatch), not a user-fixable state:
+                // no code, the frontend shows the prose.
+                return Err(CodedError::plain(format!(
                     "Cannot initialize transcribeCpp: the transcript provider is '{}'. This is a bug in the transcription task initialization.",
                     config.provider
-                ))
+                )));
             }
             Ok(None) => crate::config::DEFAULT_TRANSCRIBE_CPP_MODEL.to_string(),
             Err(e) => {
@@ -312,15 +326,22 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
         },
     };
 
-    let manager = crate::transcribe_cpp_engine::commands::model_manager().ok_or_else(|| {
-        "The transcribe.cpp model manager is not initialized. Restart Samobranka and try again."
-            .to_string()
-    })?;
+    let manager = crate::transcribe_cpp_engine::commands::model_manager()
+        .ok_or_else(|| {
+            CodedError::coded(
+                "The transcribe.cpp model manager is not initialized. Restart Samobranka and try again.",
+                TRANSCRIPTION_MODEL_MANAGER_UNINITIALIZED,
+                None,
+            )
+        })?;
 
-    let models = manager
-        .discover_models()
-        .await
-        .map_err(|e| format!("Failed to discover transcribe.cpp models: {}", e))?;
+    let models = manager.discover_models().await.map_err(|e| {
+        CodedError::coded(
+            format!("Failed to discover transcribe.cpp models: {}", e),
+            TRANSCRIPTION_MODEL_DISCOVERY_FAILED,
+            error_params(vec![("detail", serde_json::json!(e.to_string()))]),
+        )
+    })?;
 
     let model = match &requested_model {
         Some(requested) => {
@@ -335,7 +356,9 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
     }
     .map_err(|not_ready| {
         warn!("❌ transcribeCpp model not ready: {}", not_ready);
-        not_ready.to_string()
+        // One code per variant of the model-not-ready family (spec D7):
+        // model name, percent and native detail travel in `params`.
+        CodedError::from(not_ready)
     })?;
 
     info!(
@@ -352,7 +375,13 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("transcribeCpp model load task failed: {}", e))?;
+    .map_err(|e| {
+        CodedError::coded(
+            format!("transcribeCpp model load task failed: {}", e),
+            TRANSCRIPTION_MODEL_LOAD_FAILED,
+            error_params(vec![("detail", serde_json::json!(e.to_string()))]),
+        )
+    })?;
 
     match load_result {
         Ok(crate::transcribe_cpp_engine::transcription::NativeProviderLoad {
@@ -382,7 +411,13 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
         }
         Err(message) => {
             warn!("❌ transcribeCpp model load failed: {}", message);
-            Err(message)
+            // The native library's message is the diagnosable part: it stays
+            // raw in `params.detail` (spec D7).
+            Err(CodedError::coded(
+                message.clone(),
+                TRANSCRIPTION_MODEL_LOAD_FAILED,
+                error_params(vec![("detail", serde_json::json!(message))]),
+            ))
         }
     }
 }
@@ -403,7 +438,7 @@ pub async fn get_or_init_transcribe_cpp_provider_with_model<R: Runtime>(
 pub async fn get_or_init_transcribe_cpp_provider_for_batch<R: Runtime>(
     app: &AppHandle<R>,
     requested_model: Option<String>,
-) -> Result<Arc<dyn TranscriptionProvider>, String> {
+) -> Result<Arc<dyn TranscriptionProvider>, CodedError> {
     // Read the transcript config directly (not through
     // api_get_transcript_config): the batch dialog may pick transcribeCpp
     // while the saved provider is something else, which is not an error —
