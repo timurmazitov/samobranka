@@ -39,6 +39,13 @@ pub const DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE: &str =
 pub const DIARIZATION_FAILED_MESSAGE: &str =
     "Speaker labels were skipped because diarization failed.";
 
+/// Hint carried by a `deferred` pass that had already announced its `queued`
+/// stage: the pass was postponed because a recording started while it waited
+/// in the queue. Mirrored by the frontend's `DIARIZATION_DEFERRED_MESSAGE`
+/// (pinned by `tests/lib/live-diarization.test.ts`).
+pub const DIARIZATION_DEFERRED_MESSAGE: &str =
+    "Speaker labels were postponed because a recording is in progress. Run diarization again once the recording stops.";
+
 /// Event emitted (and shown to the user) when a recount of the speaker labels
 /// removed every name the meeting had, so the names look lost on purpose.
 /// One constant so the import, retranscription and saved-recording paths
@@ -405,11 +412,15 @@ pub async fn diarize_recording_folder_with_model<R: Runtime>(
     {
         Ok(Ok(audio)) => audio,
         Ok(Err(error)) => {
+            // The decoder's error names the meeting's audio file, and this
+            // status flows verbatim into the UI (`reason`, the panel's error
+            // line, toast descriptions). The path is private meeting data:
+            // it stays in the log, the UI gets a content-free sentence.
             warn!("Failed to decode recording for diarization: {}", error);
             return unavailable_for(
                 segments.len(),
                 DiarizationStatus::Failed,
-                Some(error.to_string()),
+                Some("recording audio could not be decoded".to_string()),
             );
         }
         Err(error) => {
@@ -723,8 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_outcome_keeps_existing_segments_unlabeled() {
-        let mut segments = vec![crate::api::TranscriptSegment {
+    fn a_failed_outcome_keeps_existing_segments_unlabeled() {        let mut segments = vec![crate::api::TranscriptSegment {
             id: "t1".to_string(),
             text: "hello".to_string(),
             timestamp: "2026-01-01T00:00:00Z".to_string(),
@@ -746,5 +756,43 @@ mod tests {
         assert_eq!(outcome.speakers, vec![None]);
         assert_eq!(segments[0].speaker, None);
         assert_eq!(outcome.error.as_deref(), Some("recording audio not found"));
+    }
+
+    #[tokio::test]
+    async fn a_decode_failure_reports_a_reason_without_the_meeting_path() {
+        // The decoder's error names the meeting's audio file. That status
+        // flows verbatim into the UI, so it must not carry the private folder
+        // path. Give the pass a folder holding a corrupt `audio.wav`: the
+        // decode branch runs first and answers `failed` before the model load.
+        let app = tauri::test::mock_app();
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("audio.wav"), b"not a real wav file").unwrap();
+        let model = model("nemotron-3-diarization-bf16", ModelStatus::Available);
+
+        let mut segments = vec![crate::api::TranscriptSegment {
+            id: "t1".to_string(),
+            text: "hello".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            audio_start_time: Some(0.0),
+            audio_end_time: Some(1.0),
+            duration: Some(1.0),
+            speaker: None,
+        }];
+        let outcome = super::diarize_recording_folder_with_model(
+            app.handle(),
+            "meeting-1",
+            folder.path(),
+            &mut segments,
+            &model,
+        )
+        .await;
+
+        assert_eq!(outcome.status, DiarizationStatus::Failed);
+        let reason = outcome.error.expect("a decode failure carries a reason");
+        assert!(
+            !reason.contains(&folder.path().display().to_string()),
+            "the UI-facing reason must not carry the meeting path: {reason}"
+        );
+        assert_eq!(reason, "recording audio could not be decoded");
     }
 }
