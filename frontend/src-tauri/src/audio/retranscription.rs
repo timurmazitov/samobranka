@@ -309,7 +309,7 @@ async fn run_retranscription<R: Runtime>(
         &app,
         &meeting_id,
         "transcribing",
-        25,
+        TRANSCRIPTION_BAND.0,
         "Loading transcription engine...",
     );
 
@@ -367,8 +367,11 @@ async fn run_retranscription<R: Runtime>(
             return Err(anyhow!("Retranscription cancelled"));
         }
 
-        // Calculate progress (25% to 80% range for transcription)
-        let progress = 25 + ((i as f32 / processable_count as f32) * 55.0) as u32;
+        // Transcription owns 30..70 (the old 25..80 was compressed to make
+        // room for the save 70..75 and diarization 75..100 stages, the same
+        // scale the import bar uses), so the bar no longer finishes at
+        // transcription.
+        let progress = transcription_progress(i, processable_count);
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
             &app,
@@ -464,7 +467,9 @@ async fn run_retranscription<R: Runtime>(
         return Err(anyhow!("Retranscription cancelled"));
     }
 
-    emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
+    // Saving owns 70..75: the last five points before the band the frontend
+    // holds for diarization (75..100, fed by the shared pass state).
+    emit_progress(&app, &meeting_id, "saving", SAVING_PROGRESS, "Saving transcripts...");
 
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
@@ -539,7 +544,7 @@ async fn run_retranscription<R: Runtime>(
         &app,
         &meeting_id,
         "saving",
-        90,
+        DIARIZATION_BAND_START,
         "Writing transcript files...",
     );
 
@@ -560,11 +565,15 @@ async fn run_retranscription<R: Runtime>(
         warn!("Failed to update metadata.json: {}", e);
     }
 
+    // The bar does not finish here: the last native milestone is 75, the
+    // top of the save band. The 75..100 band belongs to the diarization pass
+    // and is fed by the frontend's shared pass state (one number), so a
+    // native "100" here would make the bar lie about the work still running.
     emit_progress(
         &app,
         &meeting_id,
         "complete",
-        100,
+        DIARIZATION_BAND_START,
         "Retranscription complete",
     );
 
@@ -600,6 +609,27 @@ fn emit_progress<R: Runtime>(
             message: message.to_string(),
         },
     );
+}
+
+/// The retranscription bar's scale, in one place so the milestones cannot
+/// drift. It is deliberately the import bar's scale (see `import.rs`): the
+/// dialog shows the same spliced bar for both paths. Transcription owns
+/// 30..70, saving owns 70..75, and the top band 75..100 belongs to the
+/// diarization pass — fed by the frontend's shared pass state as one
+/// number, which is why no native milestone may reach past
+/// [`DIARIZATION_BAND_START`].
+const TRANSCRIPTION_BAND: (u32, u32) = (30, 70);
+const SAVING_PROGRESS: u32 = 70;
+const DIARIZATION_BAND_START: u32 = 75;
+
+/// The bar percentage for transcribing segment `index` of `count`. The band
+/// is [TRANSCRIPTION_BAND]; the last segment stays one point below the top
+/// so "saving" is visibly a new milestone.
+fn transcription_progress(index: usize, count: usize) -> u32 {
+    let (start, end) = TRANSCRIPTION_BAND;
+    let span = end - start;
+    let fraction = (index as f32 / count.max(1) as f32).min(1.0);
+    start + (fraction * (span - 1) as f32) as u32
 }
 
 
@@ -820,6 +850,33 @@ mod tests {
     fn test_vad_redemption_time_constant() {
         // Batch processing uses 2000ms to bridge natural pauses in full-file VAD
         assert_eq!(VAD_REDEMPTION_TIME_MS, 2000);
+    }
+
+    /// The bar's scale is a contract with the retranscription dialog and is
+    /// deliberately the import bar's scale: transcription must stay inside
+    /// 30..70 (the old 25..80 read as "finished" while the bar still owed
+    /// save and diarization), saving sits at 70..75, and the last native
+    /// milestone never crosses into the diarization band.
+    #[test]
+    fn the_progress_scale_leaves_the_diarization_band_to_the_pass_state() {
+        // The first segment starts the band, the last stays under its top.
+        assert_eq!(transcription_progress(0, 10), 30);
+        assert_eq!(transcription_progress(1, 10), 33);
+        assert_eq!(transcription_progress(9, 10), 65);
+        assert!(transcription_progress(10, 10) < TRANSCRIPTION_BAND.1);
+        // A single segment still reads as started, not finished.
+        assert_eq!(transcription_progress(0, 1), 30);
+        assert_eq!(transcription_progress(0, 0), 30);
+        // The whole band sweeps inside 30..70 and never touches save or
+        // diarization.
+        for count in 1..=50 {
+            for index in 0..=count {
+                let value = transcription_progress(index, count);
+                assert!((30..TRANSCRIPTION_BAND.1).contains(&value), "{index}/{count} -> {value}");
+            }
+        }
+        assert_eq!(SAVING_PROGRESS, 70);
+        assert_eq!(DIARIZATION_BAND_START, 75);
     }
 
     #[test]

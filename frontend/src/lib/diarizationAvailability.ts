@@ -124,3 +124,10 @@ export function importBarPercentage(
     ? 0
     : Math.min(progressPercentage, 100);
 }
+
+/**
+ * The retranscription bar uses the import bar's scale unchanged (see
+ * `retranscription.rs`), so it reads the same band mapping; the alias names
+ * the mapping for its second caller without duplicating the rule.
+ */
+export const retranscriptionBarPercentage = importBarPercentage;
