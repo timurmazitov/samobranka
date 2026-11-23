@@ -1,6 +1,6 @@
 # Add the Rust l10n module
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## Context

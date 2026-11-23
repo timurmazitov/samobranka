@@ -1,6 +1,6 @@
 # Delete progress strings no listener reads
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 
 ## Context

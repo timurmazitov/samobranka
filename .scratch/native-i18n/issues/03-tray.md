@@ -1,6 +1,6 @@
 # Localize the tray menu
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 Blocked by: 01, 02
 

@@ -1,6 +1,6 @@
 # Localize import and retranscription progress messages
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 Blocked by: 02
 

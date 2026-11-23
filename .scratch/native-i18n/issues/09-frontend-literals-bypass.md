@@ -1,6 +1,6 @@
 # Fix frontend English literals that bypass i18n
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 
 ## Context

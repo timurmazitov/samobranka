@@ -1,6 +1,6 @@
 # Bridge the UI language into Rust
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 Blocked by: 01
 

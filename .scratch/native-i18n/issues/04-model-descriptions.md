@@ -1,6 +1,6 @@
 # Localize model descriptions in the model-picker window
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## Context
