@@ -96,7 +96,7 @@ type AudioCppModelInfo = import('../../src/lib/audiocpp').AudioCppModelInfo;
 
 let speakers: import('../../src/types').MeetingSpeaker[] = [];
 
-function diarizationModel(): AudioCppModelInfo {
+function diarizationModel(overrides: Partial<AudioCppModelInfo> = {}): AudioCppModelInfo {
   return {
     name: 'nemotron-3-diarization-bf16',
     display_name: 'Nemotron-3 Diarization',
@@ -109,21 +109,33 @@ function diarizationModel(): AudioCppModelInfo {
     size_bytes: 198_720_928,
     description: 'Speaker diarization',
     status: 'Available',
+    ...overrides,
   };
 }
 
 let availableModels: AudioCppModelInfo[] = [diarizationModel()];
-const modelClient = { getAvailableModels: async () => availableModels };
+/** What the runtime probe reports: undefined leaves the runtime unknown. */
+let runtimeAvailable: boolean | undefined = true;
+const getDiagnostics = mock(async () => ({
+  available: runtimeAvailable === true,
+  library_path: null,
+  abi_version: null,
+  build_version: null,
+  families: [],
+  tasks: [],
+  error: runtimeAvailable === false ? 'libaudio.cpp not found' : null,
+}));
+const modelClient = { getAvailableModels: async () => availableModels, getDiagnostics };
 
 let diarizeStarted: () => void = () => {};
 let finishDiarize: (result: DiarizationResult) => void = () => {};
-const diarizationClient = {
-  diarizeMeeting: (_meetingId: string) =>
-    new Promise<DiarizationResult>((resolve) => {
-      diarizeStarted();
-      finishDiarize = resolve;
-    }),
-};
+const diarizeMeeting = mock((_meetingId: string) =>
+  new Promise<DiarizationResult>((resolve) => {
+    diarizeStarted();
+    finishDiarize = resolve;
+  }),
+);
+const diarizationClient = { diarizeMeeting };
 
 /** The fake bridge injected into the seam store. */
 function fakeListen() {
@@ -201,6 +213,7 @@ beforeEach(() => {
   };
   speakers = [];
   availableModels = [diarizationModel()];
+  runtimeAvailable = true;
   invoke.mockClear();
   notify.mockClear();
 });
@@ -362,4 +375,236 @@ test('a terminal event ends the pass and the indicator disappears', async () => 
 
   expect(text(instance)).not.toContain(en.speakers.stages.inferring);
   expect(diarizeButton(instance)?.props.disabled).toBeDefined();
+});
+
+// --- Honest death of the indicator, and availability hints (ticket 04) ------
+
+function retryButton(instance: ReactTestRenderer) {
+  return instance.root.find(
+    (n) => n.props?.['data-testid'] === 'diarization-retry-button',
+  );
+}
+
+function emitFailure(bridge: ReturnType<typeof fakeListen>, reason: string | null = null) {
+  emit(bridge, 'diarization-unavailable', {
+    meeting_id: 'meeting-a',
+    status: 'failed',
+    ...(reason ? { reason, message: 'Speaker labels were skipped because diarization failed.' } : {}),
+  });
+}
+
+test('a failed automatic pass shows the reason and a retry instead of vanishing', async () => {
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'inferring' });
+  emitFailure(bridge, 'engine exploded');
+
+  expect(text(instance)).toContain('engine exploded');
+  expect(text(instance)).toContain(en.speakers.passFailed.split(':')[0]);
+  const error = instance.root.find(
+    (n) => n.props?.['data-testid'] === 'diarization-pass-error',
+  );
+  expect(error).toBeDefined();
+  // The spinner is gone; the error block is the honest death of the pass.
+  expect(instance.root.findAll((n) => n.props?.['data-testid'] === 'diarization-pass-indicator'))
+    .toHaveLength(0);
+  // The retry is offered; the toast path is untouched (this store event does
+  // not toast — the dialogs' own listeners keep doing that).
+  expect(notify).not.toHaveBeenCalled();
+});
+
+test('a failed pass with no reason still shows the error state', async () => {
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'decoding' });
+  emitFailure(bridge);
+
+  expect(
+    instance.root.find((n) => n.props?.['data-testid'] === 'diarization-pass-error'),
+  ).toBeDefined();
+  expect(text(instance)).toContain(en.speakers.passFailedNoReason);
+});
+
+test('the retry button starts the same pass again and the stage replaces the error', async () => {
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'inferring' });
+  emitFailure(bridge, 'engine exploded');
+  expect(
+    instance.root.find((n) => n.props?.['data-testid'] === 'diarization-pass-error'),
+  ).toBeDefined();
+
+  diarizeMeeting.mockClear();
+  await act(async () => {
+    void retryButton(instance).props.onClick();
+  });
+  expect(diarizeMeeting).toHaveBeenCalledTimes(1);
+  expect(diarizeMeeting.mock.calls[0][0]).toBe('meeting-a');
+
+  // The retried pass announces its first stage: the error gives way to the
+  // spinner without the panel clearing anything itself.
+  await emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'queued' });
+  expect(text(instance)).toContain(en.speakers.stages.queued);
+  expect(
+    instance.root.findAll((n) => n.props?.['data-testid'] === 'diarization-pass-error'),
+  ).toHaveLength(0);
+  expect(
+    instance.root.find((n) => n.props?.['data-testid'] === 'diarization-pass-indicator'),
+  ).toBeDefined();
+
+  // Let the in-flight command resolve so no pending promise leaks to the
+  // next test; its failure result re-establishes the error block through
+  // the terminal event, which is exactly what the retry cycle owes.
+  await act(async () => {
+    finishDiarize({
+      meeting_id: 'meeting-a',
+      status: 'ran',
+      labeled_segments: 1,
+      total_segments: 2,
+      speakers_available: true,
+      error: null,
+    });
+  });
+});
+
+test('a retry that dies again returns to the error state', async () => {
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'inferring' });
+  emitFailure(bridge, 'engine exploded');
+
+  diarizeMeeting.mockClear();
+  await act(async () => {
+    void retryButton(instance).props.onClick();
+  });
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'decoding' });
+  emitFailure(bridge, 'engine exploded again');
+
+  expect(text(instance)).toContain('engine exploded again');
+  expect(
+    instance.root.find((n) => n.props?.['data-testid'] === 'diarization-retry-button'),
+  ).toBeDefined();
+
+  // Drain the pending command so its `ran` result does not race the next
+  // test — the terminal already owns the error state.
+  await act(async () => {
+    finishDiarize({
+      meeting_id: 'meeting-a',
+      status: 'ran',
+      labeled_segments: 1,
+      total_segments: 2,
+      speakers_available: true,
+      error: null,
+    });
+  });
+});
+
+test('a failed automatic pass is shown over existing speaker rows', async () => {
+  // Post-import recount that died: the panel is the source of truth outside
+  // the dialogs, so the error shows even where rows are already listed.
+  speakers = [
+    { label: 'speaker_0', speaker_name: null, segment_count: 2, first_start_time: 0 },
+  ];
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage: 'applying_labels' });
+  emitFailure(bridge, 'label write broke');
+
+  expect(text(instance)).toContain('Speaker 1');
+  expect(text(instance)).toContain('label write broke');
+});
+
+test('the automatic pass after an import is visible exactly like a manual one', async () => {
+  // No button was ever pressed: pure `diarization-progress` traffic from a
+  // detached post-import pass drives the same indicator stage-for-stage.
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  for (const stage of ['queued', 'loading_model', 'decoding', 'inferring', 'applying_labels'] as const) {
+    emit(bridge, 'diarization-progress', { meeting_id: 'meeting-a', stage });
+    expect(text(instance)).toContain(en.speakers.stages[stage]);
+    expect(
+      instance.root.find((n) => n.props?.['data-testid'] === 'diarization-pass-indicator'),
+    ).toBeDefined();
+    expect(diarizeButton(instance).props.disabled).toBeTrue();
+  }
+
+  emit(bridge, 'transcript-updated', {
+    meeting_id: 'meeting-a',
+    labeled_segments: 2,
+    total_segments: 2,
+  });
+  expect(
+    instance.root.findAll((n) => n.props?.['data-testid'] === 'diarization-pass-indicator'),
+  ).toHaveLength(0);
+  expect(diarizeButton(instance).props.disabled).toBeFalse();
+});
+
+test('without the native runtime the panel explains itself and blocks the run', async () => {
+  runtimeAvailable = false;
+  availableModels = [diarizationModel()];
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  expect(text(instance)).toContain('audio.cpp engine is unavailable');
+  const button = diarizeButton(instance);
+  expect(button.props.disabled).toBeTrue();
+  expect(String(button.props.title)).toContain('audio.cpp engine is unavailable');
+});
+
+test('a missing model states the download hint explicitly in the panel body', async () => {
+  availableModels = [diarizationModel({ task: 'asr' as unknown as 'diar' })];
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  const hint = instance.root.find((n) => n.props?.['data-testid'] === 'diarization-model-hint');
+  expect(hint).toBeDefined();
+  expect(nodeText(hint)).toContain('Download the Nemotron-3-Diarization model');
+  expect(diarizeButton(instance).props.disabled).toBeTrue();
+});
+
+test('the model hint outranks the runtime hint when both are missing', async () => {
+  // What the user can act on first — download the model — is what the panel
+  // says; the runtime detail would not change the next step.
+  availableModels = [diarizationModel({ task: 'asr' as unknown as 'diar' })];
+  runtimeAvailable = false;
+  const bridge = fakeListen();
+  const store = new DiarizationPassStore(bridge.listen as never);
+
+  const instance = await renderPanel(store);
+  await store.settled();
+
+  expect(text(instance)).toContain('Download the Nemotron-3-Diarization model');
+  expect(
+    instance.root.findAll((n) => n.props?.['data-testid'] === 'diarization-runtime-hint'),
+  ).toHaveLength(0);
 });

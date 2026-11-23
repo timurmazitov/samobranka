@@ -22,7 +22,8 @@ interface TranscriptButtonGroupProps {
   onRefetchTranscripts?: () => Promise<void>;
   /** Panel seams, forwarded so component tests can inject fakes. */
   diarizationClient?: DiarizationClient;
-  diarizationModelClient?: Pick<AudioCppModelClient, 'getAvailableModels'>;
+  diarizationModelClient?: Pick<AudioCppModelClient, 'getAvailableModels'> &
+    Partial<Pick<AudioCppModelClient, 'getDiagnostics'>>;
 }
 
 
