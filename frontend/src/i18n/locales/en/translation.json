@@ -186,6 +186,14 @@
     "completeToast_one": "Retranscription complete! {{count}} segment created.",
     "completeToast_other": "Retranscription complete! {{count}} segments created.",
     "cancelledToast": "Retranscription cancelled",
+    "diarizationHint": "You can close this dialog — diarization continues and shows in the meeting's speakers panel.",
+    "stages": {
+      "diarizing": "Diarizing…",
+      "complete": "Retranscription complete"
+    },
+    "actions": {
+      "done": "Done"
+    },
     "languageLabel": "Language",
     "languageTranscribeCppHint": "Language selection isn't supported for Transcribe.cpp. The model detects the language automatically.",
     "modelLabel": "Model",
