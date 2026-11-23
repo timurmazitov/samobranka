@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use log::{info, warn};
 use serde::Serialize;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use super::audio_cpp_diarizer::{AudioCppDiarizer, DiarizerLoadError};
 use super::diarization::{attribute_segments_to_speakers, SpeakerTurnInterval};
@@ -70,6 +70,139 @@ pub fn transcript_updated_payload(
         "labeled_segments": labeled_segments,
         "total_segments": total_segments,
     })
+}
+
+/// Event announcing the live stage of a running diarization pass, so the UI
+/// can tell "the pass is working" from "the pass never started" and "the
+/// pass died". One channel serves every surface: the speakers panel, the
+/// import and retranscription dialogs, and the live-stop status sequence all
+/// read one per-meeting pass state fed by a single frontend listener.
+///
+/// The terminal events (`transcript-updated`, `diarization-unavailable`,
+/// `speaker-names-reset`) keep their forms; this channel only precedes them.
+pub const DIARIZATION_PROGRESS_EVENT: &str = "diarization-progress";
+
+/// The live stage a running pass is in, as the `diarization-progress`
+/// channel reports it. snake_case in serde so the payload matches the
+/// frontend's `DiarizationStage` union exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiarizationStage {
+    /// Waiting for the process-wide pass lock (another meeting runs first).
+    Queued,
+    /// Loading the Nemotron model onto the native engine.
+    LoadingModel,
+    /// Decoding the meeting file to 16 kHz mono f32.
+    Decoding,
+    /// Running the offline audio.cpp inference.
+    Inferring,
+    /// Writing speaker labels and recounting names.
+    ApplyingLabels,
+}
+
+/// An internal boundary a pass crosses — the input to the pure progress
+/// mapper. Separate from [`DiarizationStage`] because one stage spans several
+/// phases: a model load and a label write each bookend a 0→100 percentage
+/// pair, while decode and infer are a single indeterminate phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiarizationPhase {
+    Queued,
+    ModelLoadStarted,
+    ModelLoadCommitted,
+    Decoding,
+    Inferring,
+    LabelsStarted,
+    LabelsCommitted,
+}
+
+impl DiarizationPhase {
+    /// The stage this phase belongs to.
+    fn stage(self) -> DiarizationStage {
+        match self {
+            Self::Queued => DiarizationStage::Queued,
+            Self::ModelLoadStarted | Self::ModelLoadCommitted => DiarizationStage::LoadingModel,
+            Self::Decoding => DiarizationStage::Decoding,
+            Self::Inferring => DiarizationStage::Inferring,
+            Self::LabelsStarted | Self::LabelsCommitted => DiarizationStage::ApplyingLabels,
+        }
+    }
+
+    /// The honest percentage for this phase, or `None` when the underlying
+    /// work reports no intermediate count. Only the model load and the label
+    /// write carry a real checkpoint pair (just started, committed): decode
+    /// has no decoder callback, and the audio.cpp FFI returns nothing until
+    /// the turn list is ready, so those stages stay indeterminate rather
+    /// than show invented numbers.
+    fn percentage(self) -> Option<u8> {
+        match self {
+            Self::ModelLoadStarted | Self::LabelsStarted => Some(0),
+            Self::ModelLoadCommitted | Self::LabelsCommitted => Some(100),
+            Self::Queued | Self::Decoding | Self::Inferring => None,
+        }
+    }
+
+    /// The user-facing stage sentence. The frontend keeps its own i18n strings
+    /// keyed by stage and may override this text; the message stays so the
+    /// event is self-describing for logs and for bars that print the raw
+    /// payload message like the import/retranscription progress events do.
+    fn message(self) -> &'static str {
+        match self {
+            Self::Queued => "Waiting for the diarization queue...",
+            Self::ModelLoadStarted | Self::ModelLoadCommitted => {
+                "Loading the diarization model..."
+            }
+            Self::Decoding => "Analyzing the audio...",
+            Self::Inferring => "Detecting speakers...",
+            Self::LabelsStarted | Self::LabelsCommitted => "Updating speakers...",
+        }
+    }
+}
+
+/// One `diarization-progress` notification: which meeting, which stage, an
+/// optional honest percentage, and a message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiarizationProgressEvent {
+    pub meeting_id: String,
+    pub stage: DiarizationStage,
+    /// Absent (not `null`) on indeterminate stages, so the frontend can tell
+    /// "no number is honest here" from "zero percent".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_percentage: Option<u8>,
+    pub message: String,
+}
+
+/// Maps an internal pass phase to the progress event it owes, without an
+/// `AppHandle`.
+///
+/// Pure so the stage/percentage contract is unit-tested the same way the
+/// terminal-event mapper in `diarization_run` is: every stage names itself in
+/// snake_case, carries a message, and the percentage appears only where it is
+/// honest.
+pub fn diarization_progress_event(
+    meeting_id: &str,
+    phase: DiarizationPhase,
+) -> DiarizationProgressEvent {
+    DiarizationProgressEvent {
+        meeting_id: meeting_id.to_string(),
+        stage: phase.stage(),
+        progress_percentage: phase.percentage(),
+        message: phase.message().to_string(),
+    }
+}
+
+/// Emits one pass-phase progress event. Failures only log: like the terminal
+/// events, a missed progress beat must never change the pass's outcome. The
+/// emit stays in the async wrappers of the pass chain — never inside a
+/// `spawn_blocking` closure and never on the engine's session thread.
+pub fn emit_pass_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    meeting_id: &str,
+    phase: DiarizationPhase,
+) {
+    let event = diarization_progress_event(meeting_id, phase);
+    if let Err(error) = app.emit(DIARIZATION_PROGRESS_EVENT, &event) {
+        warn!("Failed to emit diarization-progress for {meeting_id}: {error}");
+    }
 }
 
 /// Why a diarization pass did or did not happen, as the UI sees it.
@@ -240,13 +373,13 @@ pub fn unavailable_for(
 /// into a second, racing lookup.
 ///
 /// `app` gives the pass access to the application event emitter so the stage
-/// boundaries (decode, model load, inference) can announce progress without
-/// restructuring the call chain. This function itself emits nothing today:
-/// the existing terminal events stay owned by `diarization_run`, and the
-/// emits must happen in these async wrappers, never on the engine's session
-/// thread.
+/// boundaries (decode, model load, inference) can announce progress on the
+/// `diarization-progress` channel. `meeting_id` names the meeting those
+/// events carry. The emits happen in these async wrappers, never on the
+/// engine's session thread.
 pub async fn diarize_recording_folder_with_model<R: Runtime>(
     app: &AppHandle<R>,
+    meeting_id: &str,
     folder: &Path,
     segments: &mut [crate::api::TranscriptSegment],
     model: &ModelInfo,
@@ -263,6 +396,7 @@ pub async fn diarize_recording_folder_with_model<R: Runtime>(
         );
     };
 
+    emit_pass_progress(app, meeting_id, DiarizationPhase::Decoding);
     let audio = match tokio::task::spawn_blocking(move || {
         crate::audio::decoder::decode_audio_file(&audio_path)
             .map(|decoded| decoded.to_whisper_format())
@@ -297,7 +431,7 @@ pub async fn diarize_recording_folder_with_model<R: Runtime>(
             )
         })
         .collect();
-    let outcome = run_and_overlay(app, &model.path, audio, &bounds).await;
+    let outcome = run_and_overlay(app, meeting_id, &model.path, audio, &bounds).await;
     apply_speaker_labels(segments, &outcome);
     outcome
 }
@@ -306,11 +440,12 @@ pub async fn diarize_recording_folder_with_model<R: Runtime>(
 /// `segment_bounds`.
 async fn run_and_overlay<R: Runtime>(
     app: &AppHandle<R>,
+    meeting_id: &str,
     model_path: &Path,
     audio: Vec<f32>,
     segment_bounds: &[(f64, f64)],
 ) -> DiarizationOutcome {
-    match run_diarization(app, model_path, audio).await {
+    match run_diarization(app, meeting_id, model_path, audio).await {
         Ok(turns) => {
             let turns: Vec<SpeakerTurnInterval> = turns
                 .into_iter()
@@ -343,25 +478,25 @@ async fn run_and_overlay<R: Runtime>(
 /// The library and model are released before returning, so a long diarization
 /// does not pin the GPU/CPU memory of the transcription model.
 ///
-/// `app` is the emitter handle for future stage-progress events; it is only
-/// carried here so the boundary functions already have it. Nothing is emitted
-/// yet, and the native load and inference stay on their blocking/session
-/// threads — emits belong in this async wrapper, never inside `load_blocking`
-/// or the session thread.
+/// The progress emits sit in this async wrapper: the native load runs on a
+/// blocking thread and the inference on the model's session thread, and
+/// neither may touch the emitter. The load gives no intermediate data, so the
+/// honest percentage is the checkpoint pair around it (started, committed);
+/// inference is indeterminate because the FFI returns nothing until the turn
+/// list is ready.
 async fn run_diarization<R: Runtime>(
     app: &AppHandle<R>,
+    meeting_id: &str,
     path: &Path,
     audio: Vec<f32>,
 ) -> Result<Vec<crate::audio_cpp_engine::wrapper::SpeakerTurn>, String> {
-    // Carried for the stage-progress emits of the following tickets; nothing
-    // is emitted here yet, so the handle stays unused for now.
-    let _ = &app;
     let path = path.to_path_buf();
     let model_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "diarization model".to_string());
 
+    emit_pass_progress(app, meeting_id, DiarizationPhase::ModelLoadStarted);
     let diarizer = tokio::task::spawn_blocking(move || {
         let engine = load_native_engine().map_err(|error| error.to_string())?;
         AudioCppDiarizer::load_blocking(engine, model_name, &path)
@@ -369,7 +504,9 @@ async fn run_diarization<R: Runtime>(
     })
     .await
     .map_err(|error| format!("diarization load task failed: {error}"))??;
+    emit_pass_progress(app, meeting_id, DiarizationPhase::ModelLoadCommitted);
 
+    emit_pass_progress(app, meeting_id, DiarizationPhase::Inferring);
     let started = Instant::now();
     let turns = diarizer
         .diarize(audio)

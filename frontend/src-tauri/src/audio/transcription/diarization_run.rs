@@ -20,7 +20,8 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use super::diarization_service::{
-    decide_diarization, transcript_updated_payload, DiarizationDecision, DiarizationStatus,
+    decide_diarization, diarization_progress_event, emit_pass_progress, transcript_updated_payload,
+    DiarizationDecision, DiarizationPhase, DiarizationStatus,
     DIARIZATION_FAILED_MESSAGE, DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
     DIARIZATION_UNAVAILABLE_MESSAGE, SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE,
     TRANSCRIPT_UPDATED_EVENT,
@@ -138,6 +139,7 @@ pub fn diarization_events(
 }
 
 /// What happened to a pass that ran after the batch job had already finished.
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BackgroundPassOutcome {
     /// The pass reached a status; configuration reasons and failures all land
@@ -364,22 +366,21 @@ pub async fn diarize_saved_meeting<R: Runtime>(
     pool: &SqlitePool,
     meeting_id: &str,
 ) -> Result<SavedMeetingDiarization, String> {
-    // One pass at a time. The guard is held across the recording check and
-    // the model load so the decision and the pass cannot interleave with a
-    // second caller.
-    let _pass = acquire_pass_lock().await;
-
-    // The meeting is read before the decision: its segment count is part of
-    // every result, including the ones that never run a pass, and the speakers
-    // panel shows it. The recording check still runs before the *model load*,
-    // which is what the spec asks for — a cheap database read does not
-    // compete with an active recording.
+    // The meeting is read before the queue: its segment count is part of
+    // every result, including the ones that never run a pass, and the
+    // speakers panel shows it. A cheap database read does not compete with
+    // an active recording, so it does not have to wait for the lock.
     let meeting = MeetingsRepository::get_meeting(pool, meeting_id)
         .await
         .map_err(|error| format!("Failed to load meeting: {error}"))?
         .ok_or_else(|| format!("Meeting not found: {meeting_id}"))?;
     let total_segments = meeting.transcripts.len();
 
+    // The decision runs before the queue so a pass that will never start —
+    // `no_model`, `no_runtime`, `deferred` — can stay silent the way the
+    // spec demands: it owes the UI no progress stages, not even `queued`.
+    // The authoritative recording check still runs *under* the lock below,
+    // because a recording may start while this pass waits for its turn.
     let models = match crate::audio_cpp_engine::commands::model_manager() {
         Some(manager) => manager.discover_models().await.unwrap_or_default(),
         // No model manager means no catalogued model at all, exactly like a
@@ -423,6 +424,30 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         }
     };
 
+    // The queue stage belongs to a pass that will actually run, so it is
+    // announced here — before the lock, while a second pass still holds it.
+    emit_pass_progress(app, meeting_id, DiarizationPhase::Queued);
+
+    // One pass at a time. The guard is held across the recording re-check and
+    // the model load so the pass cannot interleave with a second caller.
+    let _pass = acquire_pass_lock().await;
+
+    // The recording may have started while this pass waited in the queue;
+    // under the lock this is still the authoritative answer, because the
+    // model load that follows must not compete with an active recording.
+    if crate::audio::recording_commands::is_recording().await {
+        info!("Diarization of meeting {meeting_id} deferred: a recording started while the pass was queued");
+        let result = SavedMeetingDiarization {
+            meeting_id: meeting_id.to_string(),
+            status: DiarizationStatus::Deferred,
+            labeled_segments: 0,
+            total_segments,
+            error: None,
+        };
+        emit_events(app, &diarization_events(&result, false));
+        return Ok(result);
+    }
+
     let folder = match meeting.folder_path.as_deref().map(PathBuf::from) {
         Some(folder) => folder,
         None => {
@@ -455,6 +480,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 
     let outcome = super::diarization_service::diarize_recording_folder_with_model(
         app,
+        meeting_id,
         &folder,
         &mut segments,
         &model,
@@ -463,6 +489,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 
     let names_reset;
     if outcome.status == DiarizationStatus::Ran {
+        emit_pass_progress(app, meeting_id, DiarizationPhase::LabelsStarted);
         let labeled = segments
             .iter()
             .filter(|segment| segment.speaker.is_some())
@@ -482,6 +509,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         // it so imports, retranscriptions and live recordings do not leave a
         // `transcripts.json` whose speakers disagree with the transcript.
         rewrite_transcripts_json(&folder, segments).await;
+        emit_pass_progress(app, meeting_id, DiarizationPhase::LabelsCommitted);
         info!(
             "Diarized meeting {}: {} of {} transcript segments labeled",
             meeting_id, labeled, total_segments
@@ -512,7 +540,9 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 mod tests {
     use super::*;
     use crate::audio::common::BatchEngine;
-    use crate::audio::transcription::diarization_service::DiarizationStatus;
+    use crate::audio::transcription::diarization_service::{
+        DiarizationStatus, DIARIZATION_PROGRESS_EVENT,
+    };
     use std::sync::Mutex;
 
     fn result(status: DiarizationStatus, labeled: usize, total: usize) -> SavedMeetingDiarization {
@@ -707,6 +737,100 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// The progress event one pass phase must produce, as JSON, so the payload
+    /// contract (`meeting_id`, snake_case `stage`, optional
+    /// `progress_percentage`, `message`) is pinned by shape, not by
+    /// construction.
+    fn progress_json(phase: DiarizationPhase) -> serde_json::Value {
+        let event = diarization_progress_event("meeting-1", phase);
+        assert_eq!(event.meeting_id, "meeting-1");
+        serde_json::to_value(&event).expect("a progress event serializes")
+    }
+
+    #[test]
+    fn a_queued_phase_announces_the_stage_without_a_percentage() {
+        let payload = progress_json(DiarizationPhase::Queued);
+
+        assert_eq!(payload["meeting_id"], "meeting-1");
+        assert_eq!(payload["stage"], "queued");
+        // "Waiting for the queue" has no countable work: an honest indeterminate
+        // stage must omit the key, not invent a number.
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "queued is indeterminate: {payload}"
+        );
+        assert!(payload["message"].as_str().is_some_and(|text| !text.is_empty()));
+    }
+
+    #[test]
+    fn the_model_load_bookends_carry_the_honest_checkpoint_percentage() {
+        // The native load gives no intermediate data, so the honest percentage
+        // is the two checkpoints around it: just started, and committed.
+        let started = progress_json(DiarizationPhase::ModelLoadStarted);
+        assert_eq!(started["stage"], "loading_model");
+        assert_eq!(started["progress_percentage"], 0);
+
+        let committed = progress_json(DiarizationPhase::ModelLoadCommitted);
+        assert_eq!(committed["stage"], "loading_model");
+        assert_eq!(committed["progress_percentage"], 100);
+    }
+
+    #[test]
+    fn decoding_announces_the_stage_without_a_percentage() {
+        // The shared decoder gives the pass no callback, so a decoding
+        // percentage would be invented.
+        let payload = progress_json(DiarizationPhase::Decoding);
+
+        assert_eq!(payload["stage"], "decoding");
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "decoding is indeterminate: {payload}"
+        );
+    }
+
+    #[test]
+    fn inference_announces_the_stage_without_a_percentage() {
+        // The audio.cpp FFI returns nothing until the turn list is ready, so
+        // inference is indeterminate by contract.
+        let payload = progress_json(DiarizationPhase::Inferring);
+
+        assert_eq!(payload["stage"], "inferring");
+        assert!(
+            payload.get("progress_percentage").is_none(),
+            "inferring is indeterminate: {payload}"
+        );
+    }
+
+    #[test]
+    fn the_label_write_bookends_carry_the_honest_checkpoint_percentage() {
+        let started = progress_json(DiarizationPhase::LabelsStarted);
+        assert_eq!(started["stage"], "applying_labels");
+        assert_eq!(started["progress_percentage"], 0);
+
+        let committed = progress_json(DiarizationPhase::LabelsCommitted);
+        assert_eq!(committed["stage"], "applying_labels");
+        assert_eq!(committed["progress_percentage"], 100);
+    }
+
+    #[test]
+    fn every_stage_names_itself_in_snake_case_and_carries_a_message() {
+        let stages: Vec<(DiarizationPhase, &str)> = vec![
+            (DiarizationPhase::Queued, "queued"),
+            (DiarizationPhase::ModelLoadStarted, "loading_model"),
+            (DiarizationPhase::Decoding, "decoding"),
+            (DiarizationPhase::Inferring, "inferring"),
+            (DiarizationPhase::LabelsStarted, "applying_labels"),
+        ];
+        for (phase, stage) in stages {
+            let payload = progress_json(phase);
+            assert_eq!(payload["stage"], stage, "phase: {phase:?}");
+            assert!(
+                payload["message"].as_str().is_some_and(|text| !text.is_empty()),
+                "phase {phase:?} must explain itself: {payload}"
+            );
+        }
     }
 
     #[test]
@@ -961,10 +1085,12 @@ mod tests {
         assert_eq!(result.total_segments, 2);
     }
 
-    /// Records every emit of the three known terminal events, the way the
-    /// frontend listeners see them. The mock runtime's `Event` carries no
-    /// name, so each contract event gets its own listener; an emit under any
-    /// other name simply does not reach them.
+    /// Records every emit of the known pass-channel events — the three
+    /// terminals plus `diarization-progress` — the way the frontend listeners
+    /// see them. The mock runtime's `Event` carries no name, so each contract
+    /// event gets its own listener; an emit under any other name simply does
+    /// not reach them. Watching the progress channel here is what pins the
+    /// silence rule: a configuration reason must produce no progress stages.
     struct EmittedEvents {
         /// `(event name, payload)` in arrival order.
         events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
@@ -978,6 +1104,7 @@ mod tests {
             TRANSCRIPT_UPDATED_EVENT,
             DIARIZATION_UNAVAILABLE_EVENT,
             SPEAKER_NAMES_RESET_EVENT,
+            DIARIZATION_PROGRESS_EVENT,
         ] {
             let collected = events.clone();
             let name = name.to_string();
