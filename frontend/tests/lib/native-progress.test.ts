@@ -71,10 +71,10 @@ describe('importProgressText', () => {
           params: { percent: 40, found },
         }),
       );
-    expect(line(1)).toBe('Определение речевых сегментов... 40% (найден 1 сегмент)');
-    expect(line(2)).toBe('Определение речевых сегментов... 40% (найдено 2 сегмента)');
-    expect(line(5)).toBe('Определение речевых сегментов... 40% (найдено 5 сегментов)');
-    expect(line(21)).toBe('Определение речевых сегментов... 40% (найден 21 сегмент)');
+    expect(line(1)).toBe('Определение речевых сегментов… 40% (найден 1 сегмент)');
+    expect(line(2)).toBe('Определение речевых сегментов… 40% (найдено 2 сегмента)');
+    expect(line(5)).toBe('Определение речевых сегментов… 40% (найдено 5 сегментов)');
+    expect(line(21)).toBe('Определение речевых сегментов… 40% (найден 21 сегмент)');
   });
 
   test('the segments-found line stays singular-plural-correct in English too', async () => {
@@ -96,7 +96,7 @@ describe('importProgressText', () => {
       params: { current: 2, total: 5, duration_sec: 1.2 },
     });
     await i18n.changeLanguage('ru');
-    expect(importProgressText(payload)).toBe('Транскрибация: сегмент 2 из 5 (1,2 с)...');
+    expect(importProgressText(payload)).toBe('Транскрибация: сегмент 2 из 5 (1,2 с)…');
     await i18n.changeLanguage('en');
     expect(importProgressText(payload)).toBe('Transcribing segment 2 of 5 (1.2s)...');
   });
@@ -117,7 +117,7 @@ describe('retranscribeProgressText', () => {
     );
     await i18n.changeLanguage('ru');
     expect(retranscribeProgressText(progress({ stage: 'saving', code: 'saving_transcripts' }))).toBe(
-      'Сохранение транскрипций...',
+      'Сохранение транскрипций…',
     );
   });
 

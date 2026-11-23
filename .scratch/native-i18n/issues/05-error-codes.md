@@ -78,6 +78,17 @@ Rust-authored strings in the chain:
 
 ## Comments
 
+- 2026-11-23 (review fix): **`model_not_installed` / `model_not_found` no longer
+  recommend a model by name.** The ru catalog read «Скачайте Parakeet Ultra:
+  Настройки → …», baking the current default model into two generic error
+  strings: the recommendation goes stale the moment the default or the catalog
+  changes, and the error is about *a* model being absent, not about which one
+  to pick — the picker in Settings makes that choice. Both now read «Необходимо
+  скачать модель транскрибации: Настройки → …» (impersonal per spec Vocabulary,
+  no model-name parameter; the `{{model}}` interpolation of `model_not_found`
+  still names the *requested* model the user chose). The `en` catalog keeps its
+  wording: the review finding was the ru register, and the emitter's English
+  fallback prose is untouched.
 - 2026-11-23 (feat/ni-05, impl): **Code registry**: `frontend/src-tauri/src/error_codes.rs`
   — one module with all `pub const TRANSCRIPTION_*` codes, the doc-comment
   registry table (code → emitter → params), `CodedError { message, code, params }`

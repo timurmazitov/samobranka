@@ -255,7 +255,7 @@ describe('ImportAudioDialog progress', () => {
       code: 'transcribing_segment',
       params: { current: 2, total: 5, duration_sec: 1.2 },
     });
-    expect(renderedText()).toContain('Транскрибация: сегмент 2 из 5 (1,2 с)...');
+    expect(renderedText()).toContain('Транскрибация: сегмент 2 из 5 (1,2 с)…');
   });
 });
 
@@ -345,6 +345,6 @@ describe('RetranscribeDialog progress', () => {
       code: 'transcribing_segment',
       params: { current: 2, total: 5, duration_sec: 1.2 },
     });
-    expect(renderedText()).toContain('Транскрибация: сегмент 2 из 5 (1,2 с)...');
+    expect(renderedText()).toContain('Транскрибация: сегмент 2 из 5 (1,2 с)…');
   });
 });

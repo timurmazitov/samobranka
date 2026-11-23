@@ -50,7 +50,7 @@ describe('transcriptionErrorText', () => {
         }),
       ),
     ).toBe(
-      'Модель Transcribe.cpp «parakeet-ultra-Q8_0» ещё загружается (42%). Дождитесь её завершения.',
+      'Модель Transcribe.cpp «parakeet-ultra-Q8_0» ещё загружается (42%). Требуется дождаться завершения загрузки.',
     );
     expect(
       transcriptionErrorText(
@@ -60,7 +60,7 @@ describe('transcriptionErrorText', () => {
         }),
       ),
     ).toBe(
-      'Модель Transcribe.cpp «gigaam-v3-ctc-Q8_0» завершилась с ошибкой: bad gguf magic. Скачайте её заново в настройках.',
+      'Модель Transcribe.cpp «gigaam-v3-ctc-Q8_0» завершилась с ошибкой: bad gguf magic. Необходимо скачать её заново в Настройках.',
     );
   });
 
