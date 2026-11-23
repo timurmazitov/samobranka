@@ -43,6 +43,10 @@ pub mod transcription;
 // visibility.
 pub mod common;
 
+// The import/retranscription progress-bar scale, shared so the two bars and
+// the frontend band mirror cannot drift apart (see the module's doc).
+pub(crate) mod progress_scale;
+
 // Shared constants
 pub mod constants;
 
