@@ -186,34 +186,52 @@ fn parse_language_payload(payload: &str) -> Option<AppLanguage> {
 }
 
 /// Handles one `app-language-changed` event: updates the managed state if the
-/// payload is a supported code, ignores anything else. Public so the unit
-/// test drives it directly with a payload string, mirroring what the listener
+/// payload is a supported code, ignores anything else. Returns the language
+/// actually applied to the managed state, or `None` when nothing changed
+/// (rejected payload, or the event fired before `manage` so there was nothing
+/// to apply) — the listener rebuilds the tray only after a real change, so
+/// the return value is the ticket-03 handoff signal. Public so the unit test
+/// drives it directly with a payload string, mirroring what the listener
 /// receives as `event.payload()`.
-pub fn handle_language_changed<R: Runtime>(app: &AppHandle<R>, payload: &str) {
+pub fn handle_language_changed<R: Runtime>(
+    app: &AppHandle<R>,
+    payload: &str,
+) -> Option<AppLanguage> {
     let Some(language) = parse_language_payload(payload) else {
         log::warn!("l10n: ignored {LANGUAGE_CHANGED_EVENT} payload: {payload:?}");
-        return;
+        return None;
     };
-    if let Some(state) = app.try_state::<AppLanguageState>() {
-        state.set(language);
-        log::info!("l10n: interface language is now {}", language.as_code());
-    } else {
-        log::warn!("l10n: {LANGUAGE_CHANGED_EVENT} fired before the language state was managed");
+    match app.try_state::<AppLanguageState>() {
+        Some(state) => {
+            state.set(language);
+            log::info!("l10n: interface language is now {}", language.as_code());
+            Some(language)
+        }
+        None => {
+            log::warn!(
+                "l10n: {LANGUAGE_CHANGED_EVENT} fired before the language state was managed"
+            );
+            None
+        }
     }
 }
 
 /// Registers the Rust listener for [`LANGUAGE_CHANGED_EVENT`] (spec D4).
 /// Called once from `setup()` after the [`AppLanguageState`] is managed.
 ///
-/// Ticket 03 adds the tray refresh here — a single `tray::update_tray_menu`
-/// style call after the state update, so the menu re-localizes on switch.
+/// After an applied change the tray is rebuilt through
+/// [`crate::tray::update_tray_menu`], which fetches the tray by id
+/// (`"main-tray"`) and re-resolves every label from the freshly managed
+/// language — no restart, no extra plumbing (ticket 03). Rejected payloads
+/// skip the rebuild entirely.
 pub fn listen_language_changed<R: Runtime>(app: &AppHandle<R>) {
     use tauri::Listener;
 
     let handle = app.clone();
     app.listen(LANGUAGE_CHANGED_EVENT, move |event| {
-        handle_language_changed(&handle, event.payload());
-        // Ticket 03: rebuild the tray menu here, reading AppLanguageState.
+        if handle_language_changed(&handle, event.payload()).is_some() {
+            crate::tray::update_tray_menu(&handle);
+        }
     });
 }
 
@@ -318,20 +336,68 @@ mod tests {
         }
     }
 
+    /// A mock app with the store plugin installed: `update_tray_menu`'s
+    /// spawned task reads the onboarding store, and `app.store` panics without
+    /// the plugin's managed `StoreState` (the real app installs it in `run()`).
+    fn mock_app_with_store() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app with the store plugin")
+    }
+
     #[test]
     fn listen_language_changed_routes_events_into_the_managed_state() {
         // The seam is the event itself: emit as the frontend does, and the
-        // managed value must follow — the live-switch path of spec D4 without
-        // a tray (ticket 03 adds the menu rebuild).
+        // managed value must follow — the live-switch path of spec D4. The
+        // listener also hands off to `tray::update_tray_menu` (ticket 03);
+        // that spawn needs the store plugin, and with no tray registered the
+        // refresh task just logs, so the state update remains the observable.
         use tauri::Emitter;
 
-        let app = tauri::test::mock_app();
+        let app = mock_app_with_store();
         app.manage(AppLanguageState::new(AppLanguage::En));
         listen_language_changed(app.handle());
 
         app.emit(LANGUAGE_CHANGED_EVENT, "ru").expect("emit reaches the listener");
         // The mock runtime dispatches synchronously on the emitting thread.
         assert_eq!(app.state::<AppLanguageState>().get(), AppLanguage::Ru);
+    }
+
+    #[test]
+    fn handle_language_changed_reports_the_applied_language_for_the_tray_handoff() {
+        // Ticket 03 wiring contract: the listener rebuilds the tray only when
+        // this returns `Some` (an applied change). A rejected payload returns
+        // `None`, so garbage never triggers a pointless menu rebuild. The
+        // rebuild call itself (`tray::update_tray_menu`) is one line in the
+        // listener; the end-to-end live switch is verified in `tauri:dev`
+        // (the tray cannot be built under the mock runtime).
+        let app = tauri::test::mock_app();
+        app.manage(AppLanguageState::new(AppLanguage::En));
+
+        assert_eq!(
+            handle_language_changed(app.handle(), "\"ru\""),
+            Some(AppLanguage::Ru)
+        );
+        assert_eq!(
+            handle_language_changed(app.handle(), "\"en\""),
+            Some(AppLanguage::En)
+        );
+        for payload in ["not json", "\"de\"", "42", "{}", "\"\"", "null", "\"RU\""] {
+            assert_eq!(
+                handle_language_changed(app.handle(), payload),
+                None,
+                "payload {payload:?} must report no applied change"
+            );
+        }
+
+        // Event before `manage`: nothing was applied, so no handoff either.
+        let unmanaged = tauri::test::mock_app();
+        assert_eq!(
+            handle_language_changed(unmanaged.handle(), "\"ru\""),
+            None,
+            "an event with no managed state must report no applied change"
+        );
     }
 
     #[test]
