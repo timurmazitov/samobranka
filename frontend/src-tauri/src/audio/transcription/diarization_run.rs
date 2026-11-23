@@ -454,6 +454,7 @@ pub async fn diarize_saved_meeting<R: Runtime>(
         .collect();
 
     let outcome = super::diarization_service::diarize_recording_folder_with_model(
+        app,
         &folder,
         &mut segments,
         &model,
@@ -512,6 +513,7 @@ mod tests {
     use super::*;
     use crate::audio::common::BatchEngine;
     use crate::audio::transcription::diarization_service::DiarizationStatus;
+    use std::sync::Mutex;
 
     fn result(status: DiarizationStatus, labeled: usize, total: usize) -> SavedMeetingDiarization {
         SavedMeetingDiarization {
@@ -957,6 +959,109 @@ mod tests {
         assert_eq!(result.status, DiarizationStatus::NoModel);
         assert_eq!(result.labeled_segments, 0);
         assert_eq!(result.total_segments, 2);
+    }
+
+    /// Records every emit of the three known terminal events, the way the
+    /// frontend listeners see them. The mock runtime's `Event` carries no
+    /// name, so each contract event gets its own listener; an emit under any
+    /// other name simply does not reach them.
+    struct EmittedEvents {
+        /// `(event name, payload)` in arrival order.
+        events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+        _ids: Vec<tauri::EventId>,
+    }
+
+    fn record_events<R: Runtime>(app: &AppHandle<R>) -> EmittedEvents {
+        let events: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut ids = Vec::new();
+        for name in [
+            TRANSCRIPT_UPDATED_EVENT,
+            DIARIZATION_UNAVAILABLE_EVENT,
+            SPEAKER_NAMES_RESET_EVENT,
+        ] {
+            let collected = events.clone();
+            let name = name.to_string();
+            ids.push(tauri::Listener::listen_any(app, name.clone(), move |event| {
+                let payload =
+                    serde_json::from_str(event.payload()).expect("terminal events carry json");
+                collected.lock().unwrap().push((name.clone(), payload));
+            }));
+        }
+        EmittedEvents {
+            events,
+            _ids: ids,
+        }
+    }
+
+    fn recorded(events: &EmittedEvents) -> Vec<(String, serde_json::Value)> {
+        events.events.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn the_pass_emits_only_the_terminal_events_it_owed() {
+        // The emitter now reaches the whole pass chain (service, model load,
+        // inference), so a skipped pass must still announce exactly the
+        // terminal events it always did and nothing else: no new event names,
+        // no changed payloads.
+        let (pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = diarize_saved_meeting(app.handle(), &pool, "meeting-1")
+            .await
+            .expect("a missing model is a status, not an error");
+        assert_eq!(result.status, DiarizationStatus::NoModel);
+
+        let emitted = recorded(&recorded_events);
+        assert!(
+            emitted.is_empty(),
+            "a no_model pass stays silent, got: {emitted:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_pass_emits_only_diarization_unavailable_with_its_payload() {
+        // Same pinning for the announcing branch: the emitter threading must
+        // not add or rename events, and the payload keys stay exactly the
+        // contract the frontend mirrors.
+        let (pool, app) = meeting_with_two_segments().await;
+        let recorded_events = record_events(app.handle());
+
+        let result = diarize_saved_meeting(app.handle(), &pool, "meeting-1")
+            .await
+            .expect("a skipped pass is a status, not an error");
+
+        let emitted = recorded(&recorded_events);
+        // With no catalogued model the pass stays a silent configuration
+        // reason; the assertion pins the silence rule, and the payload shape
+        // below pins the announcing rule for the same code path.
+        assert_eq!(result.status, DiarizationStatus::NoModel);
+        assert!(emitted.is_empty(), "got: {emitted:?}");
+
+        // The announcing path itself: a `failed` result must produce exactly
+        // one `diarization-unavailable` with the mirrored payload.
+        let failed = SavedMeetingDiarization {
+            meeting_id: "meeting-1".to_string(),
+            status: DiarizationStatus::Failed,
+            labeled_segments: 0,
+            total_segments: 2,
+            error: Some("meeting has no recording folder".to_string()),
+        };
+        emit_events(app.handle(), &diarization_events(&failed, false));
+
+        let emitted = recorded(&recorded_events);
+        assert_eq!(
+            emitted,
+            vec![(
+                DIARIZATION_UNAVAILABLE_EVENT.to_string(),
+                serde_json::json!({
+                    "meeting_id": "meeting-1",
+                    "status": "failed",
+                    "reason": "meeting has no recording folder",
+                    "message": DIARIZATION_FAILED_MESSAGE,
+                })
+            )],
+            "the emitter threading must not change the terminal events"
+        );
     }
 
     #[tokio::test]

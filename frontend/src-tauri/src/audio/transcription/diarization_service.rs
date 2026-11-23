@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use log::{info, warn};
 use serde::Serialize;
+use tauri::{AppHandle, Runtime};
 
 use super::audio_cpp_diarizer::{AudioCppDiarizer, DiarizerLoadError};
 use super::diarization::{attribute_segments_to_speakers, SpeakerTurnInterval};
@@ -237,7 +238,15 @@ pub fn unavailable_for(
 /// The caller owns the decision (see [`decide_diarization`]), so this never
 /// re-resolves the catalog and therefore never turns a `no_model` decision
 /// into a second, racing lookup.
-pub async fn diarize_recording_folder_with_model(
+///
+/// `app` gives the pass access to the application event emitter so the stage
+/// boundaries (decode, model load, inference) can announce progress without
+/// restructuring the call chain. This function itself emits nothing today:
+/// the existing terminal events stay owned by `diarization_run`, and the
+/// emits must happen in these async wrappers, never on the engine's session
+/// thread.
+pub async fn diarize_recording_folder_with_model<R: Runtime>(
+    app: &AppHandle<R>,
     folder: &Path,
     segments: &mut [crate::api::TranscriptSegment],
     model: &ModelInfo,
@@ -288,19 +297,20 @@ pub async fn diarize_recording_folder_with_model(
             )
         })
         .collect();
-    let outcome = run_and_overlay(&model.path, audio, &bounds).await;
+    let outcome = run_and_overlay(app, &model.path, audio, &bounds).await;
     apply_speaker_labels(segments, &outcome);
     outcome
 }
 
 /// Runs the pass with an already resolved model and overlays the turns onto
 /// `segment_bounds`.
-async fn run_and_overlay(
+async fn run_and_overlay<R: Runtime>(
+    app: &AppHandle<R>,
     model_path: &Path,
     audio: Vec<f32>,
     segment_bounds: &[(f64, f64)],
 ) -> DiarizationOutcome {
-    match run_diarization(model_path, audio).await {
+    match run_diarization(app, model_path, audio).await {
         Ok(turns) => {
             let turns: Vec<SpeakerTurnInterval> = turns
                 .into_iter()
@@ -332,10 +342,20 @@ async fn run_and_overlay(
 ///
 /// The library and model are released before returning, so a long diarization
 /// does not pin the GPU/CPU memory of the transcription model.
-async fn run_diarization(
+///
+/// `app` is the emitter handle for future stage-progress events; it is only
+/// carried here so the boundary functions already have it. Nothing is emitted
+/// yet, and the native load and inference stay on their blocking/session
+/// threads — emits belong in this async wrapper, never inside `load_blocking`
+/// or the session thread.
+async fn run_diarization<R: Runtime>(
+    app: &AppHandle<R>,
     path: &Path,
     audio: Vec<f32>,
 ) -> Result<Vec<crate::audio_cpp_engine::wrapper::SpeakerTurn>, String> {
+    // Carried for the stage-progress emits of the following tickets; nothing
+    // is emitted here yet, so the handle stays unused for now.
+    let _ = &app;
     let path = path.to_path_buf();
     let model_name = path
         .file_name()
