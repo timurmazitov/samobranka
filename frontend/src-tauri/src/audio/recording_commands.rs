@@ -168,12 +168,14 @@ fn map_recording_start_error<R: Runtime>(app: &AppHandle<R>, error: RecordingSta
             let error = RecordingStartError::TranscriptionRuntime(source);
             if let Err(emit_error) = app.emit(
                 "transcription-error",
-                serde_json::json!({
-                    "error": error.to_string(),
-                    "userMessage": TRANSCRIPTION_RUNTIME_USER_MESSAGE,
-                    "actionable": false,
-                    "phase": "startup"
-                }),
+                crate::error_codes::transcription_error_payload(
+                    error.to_string(),
+                    TRANSCRIPTION_RUNTIME_USER_MESSAGE,
+                    false,
+                    "startup",
+                    Some(crate::error_codes::TRANSCRIPTION_RUNTIME_UNAVAILABLE),
+                    None,
+                ),
             ) {
                 error!("Failed to emit transcription runtime startup error: {emit_error}");
             }
@@ -495,15 +497,17 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         // (download progress is already shown in top-right toast)
         let _ = app.emit(
             "transcription-error",
-            serde_json::json!({
-                "error": validation_error,
-                "userMessage": format!("Recording cannot start: {}", validation_error),
-                "actionable": false,
-                "phase": "startup"
-            }),
+            crate::error_codes::transcription_error_payload(
+                validation_error.message.clone(),
+                format!("Recording cannot start: {}", validation_error.message),
+                false,
+                "startup",
+                validation_error.code,
+                validation_error.params,
+            ),
         );
 
-        return Err(validation_error);
+        return Err(validation_error.message);
     }
     info!("✅ Transcription model validation passed");
 
@@ -744,15 +748,17 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         // (download progress is already shown in top-right toast)
         let _ = app.emit(
             "transcription-error",
-            serde_json::json!({
-                "error": validation_error,
-                "userMessage": format!("Recording cannot start: {}", validation_error),
-                "actionable": false,
-                "phase": "startup"
-            }),
+            crate::error_codes::transcription_error_payload(
+                validation_error.message.clone(),
+                format!("Recording cannot start: {}", validation_error.message),
+                false,
+                "startup",
+                validation_error.code,
+                validation_error.params,
+            ),
         );
 
-        return Err(validation_error);
+        return Err(validation_error.message);
     }
     info!("✅ Transcription model validation passed");
 

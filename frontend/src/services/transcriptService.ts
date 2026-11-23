@@ -20,6 +20,15 @@ export interface TranscriptionErrorPayload {
   userMessage: string;
   actionable: boolean;
   phase: 'startup' | 'active';
+  /**
+   * Stable identifier from the Rust registry (`src-tauri/src/error_codes.rs`,
+   * native-i18n spec D7), null when the emitter had no code. Resolved through
+   * `transcription.errors.<code>` by `lib/transcription-error.ts`; the
+   * English `userMessage` above is the fallback.
+   */
+  code?: string | null;
+  /** Interpolated values for the catalog sentence (model, percent, detail). */
+  params?: Record<string, unknown> | null;
 }
 
 /**

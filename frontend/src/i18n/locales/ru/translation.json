@@ -1170,5 +1170,24 @@
       "tabSummary": "Конспект",
       "valueText": "Панель транскрипции — {{percent}} процентов"
     }
+  },
+  "transcription": {
+    "errors": {
+      "engine_init_failed": "Не удалось запустить распознавание речи. Проверьте настройки модели.",
+      "runtime_unavailable": "Не удалось инициализировать распознавание речи. Перезапустите Samobranka. Если проблема повторяется, восстановите или переустановите приложение.",
+      "model_not_installed": "Модель Transcribe.cpp не установлена. Скачайте Parakeet Ultra: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_not_found": "Модель Transcribe.cpp «{{model}}» недоступна. Скачайте Parakeet Ultra: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_not_downloaded": "Модель Transcribe.cpp «{{model}}» не загружена. Скачайте её: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_downloading": "Модель Transcribe.cpp «{{model}}» ещё загружается ({{percent}}%). Дождитесь её завершения.",
+      "model_corrupted": "Модель Transcribe.cpp «{{model}}» повреждена. Удалите её и скачайте заново в настройках.",
+      "model_errored": "Модель Transcribe.cpp «{{model}}» завершилась с ошибкой: {{detail}}. Скачайте её заново в настройках.",
+      "provider_not_loaded": "Модель транскрибации не загружена.",
+      "audio_too_short": "Аудиофрагмент слишком короткий: {{samples}} отсчётов при минимуме {{minimum}}.",
+      "engine_failed": "Сбой движка транскрибации: {{detail}}",
+      "language_unsupported": "Язык «{{language}}» не поддерживается этим провайдером.",
+      "model_manager_uninitialized": "Диспетчер моделей Transcribe.cpp не инициализирован. Перезапустите Samobranka и повторите попытку.",
+      "model_discovery_failed": "Не удалось найти модели Transcribe.cpp: {{detail}}",
+      "model_load_failed": "Не удалось загрузить модель Transcribe.cpp: {{detail}}"
+    }
   }
 }

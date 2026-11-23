@@ -1141,5 +1141,24 @@
       "tabSummary": "Summary",
       "valueText": "Transcript panel {{percent}} percent"
     }
+  },
+  "transcription": {
+    "errors": {
+      "engine_init_failed": "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
+      "runtime_unavailable": "Speech recognition could not initialize. Restart Samobranka. If the problem continues, repair or reinstall the app.",
+      "model_not_installed": "No Transcribe.cpp model is installed. Download Parakeet Ultra in Settings → Transcript Model → Transcribe.cpp models.",
+      "model_not_found": "Transcribe.cpp model '{{model}}' is not available. Download Parakeet Ultra in Settings → Transcript Model → Transcribe.cpp models.",
+      "model_not_downloaded": "Transcribe.cpp model '{{model}}' is not downloaded. Download it in Settings → Transcript Model → Transcribe.cpp models.",
+      "model_downloading": "Transcribe.cpp model '{{model}}' is still downloading ({{percent}}%). Please wait for it to finish.",
+      "model_corrupted": "Transcribe.cpp model '{{model}}' is corrupted. Delete it and download it again in Settings.",
+      "model_errored": "Transcribe.cpp model '{{model}}' has an error: {{detail}}. Download it again in Settings.",
+      "provider_not_loaded": "No transcription model is loaded.",
+      "audio_too_short": "Audio too short: {{samples}} samples (minimum {{minimum}}).",
+      "engine_failed": "Transcription engine failed: {{detail}}",
+      "language_unsupported": "Language '{{language}}' is not supported by this provider.",
+      "model_manager_uninitialized": "The transcribe.cpp model manager is not initialized. Restart Samobranka and try again.",
+      "model_discovery_failed": "Failed to discover transcribe.cpp models: {{detail}}",
+      "model_load_failed": "Failed to load the transcribe.cpp model: {{detail}}"
+    }
   }
 }
