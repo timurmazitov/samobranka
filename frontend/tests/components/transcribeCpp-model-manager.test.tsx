@@ -192,6 +192,22 @@ test('lists every catalogued model with its purpose and size', async () => {
   expect(text).toContain('Q4_K_M');
 });
 
+test('the card renders the localized description and quantization note, not the Rust prose', async () => {
+  // native-i18n ticket 04: the description comes from
+  // `models.transcribeCpp.descriptions.<family>` and the quantization note —
+  // the sentence the Rust catalog macro used to append — from the frontend
+  // key next to the badge. A card still rendering `model.description` (the
+  // sentinel below) or missing the note must fail here.
+  const client = new FakeClient();
+  client.models = [baseModel({ description: 'RUST FALLBACK PROSE' })];
+
+  const text = textOf(await render(client));
+
+  expect(text).toContain('Multilingual speech recognition (Parakeet Ultra)');
+  expect(text).not.toContain('RUST FALLBACK PROSE');
+  expect(text).toContain('Quantization: Q8_0.');
+});
+
 test('downloading a model invokes the download command and shows progress', async () => {
   const client = new FakeClient();
   client.models = [baseModel()];

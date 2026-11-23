@@ -12,12 +12,16 @@ import {
 
 import i18n, {
   DEFAULT_LANGUAGE,
-  normalizeAppLanguage,
+  resolveAppLanguage,
   systemLocale,
   type AppLanguageCode,
 } from '@/i18n';
 import { applyWindowTitle } from '@/lib/app-window-title';
-import { loadAppLanguage, saveAppLanguage } from '@/lib/app-language';
+import {
+  APP_LANGUAGE_CHANGED_EVENT,
+  loadAppLanguage,
+  saveAppLanguage,
+} from '@/lib/app-language';
 
 interface LanguageContextValue {
   language: AppLanguageCode;
@@ -38,10 +42,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     const resolve = async () => {
       // A stored choice always wins. Without one, first run follows the OS
       // locale — `navigator.language` because tauri-plugin-os has no Rust half
-      // installed in this app.
-      let next: AppLanguageCode = normalizeAppLanguage(systemLocale());
-      const stored = await loadAppLanguage();
-      if (stored) next = stored;
+      // installed in this app. `resolveAppLanguage` is the one frontend
+      // algorithm; its Rust twin in `l10n/language.rs` is pinned to the same
+      // case vector by `tests/lib/app-language-parity.test.ts`.
+      const next = resolveAppLanguage(await loadAppLanguage(), systemLocale());
       if (cancelled) return;
 
       if (i18n.language !== next) {
@@ -85,6 +89,23 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       // The switch itself already happened; a failed write only means the
       // choice will not survive a restart.
       console.error('Failed to save app language preference:', error);
+    }
+    // Tell the Rust side (native-i18n spec D4): the listener updates the
+    // managed language so the native surfaces re-localize without a restart.
+    // Sent even when the store write failed — the switch happened, so the
+    // live state must follow the UI regardless of persistence. Guarded on the
+    // injected Tauri internals and dynamically imported so the statically
+    // exported browser build never touches Tauri APIs (same pattern as
+    // `src/lib/app-window-title.ts`).
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+      try {
+        const { emit } = await import('@tauri-apps/api/event');
+        await emit(APP_LANGUAGE_CHANGED_EVENT, next);
+      } catch (error) {
+        // Without the native side the UI is still fully switched; only Rust
+        // surfaces keep their previous language until the next start.
+        console.error('Failed to notify the native side about the language change:', error);
+      }
     }
   }, []);
 

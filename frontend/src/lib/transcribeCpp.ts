@@ -109,6 +109,30 @@ export function formatModelSize(sizeMb: number): string {
   return formatMegabytes(sizeMb, i18n.language as AppLanguageCode);
 }
 
+/**
+ * Card description, resolved by family from the interface catalog
+ * (`models.transcribeCpp.descriptions.<family>`, native-i18n spec D6), the
+ * same way `taskLabel()` resolves the audio.cpp task badge. Family names can
+ * contain dots (`parakeet-tdt-0.6b-v3`): i18next's deep lookup reassembles
+ * segments that are not themselves keys, so the dotted family resolves to one
+ * catalog entry. `fallback` is the Rust catalog's English prose, shown for a
+ * family whose keys have not landed yet.
+ */
+export function modelDescription(family: string, fallback: string): string {
+  const key = `models.transcribeCpp.descriptions.${family}`;
+  const resolved = i18n.t(key, { defaultValue: fallback });
+  return resolved === key ? fallback : resolved;
+}
+
+/**
+ * Quantization note shown next to the quantization badge. The catalog macro
+ * used to bake this sentence into `description` at compile time; the card
+ * renders it from the interface catalog instead (native-i18n ticket 04).
+ */
+export function quantizationNote(quantization: string): string {
+  return i18n.t('models.transcribeCpp.quantizationNote', { quantization });
+}
+
 /** Unlisten handle returned by an event subscription. */
 export type UnlistenFn = () => void;
 

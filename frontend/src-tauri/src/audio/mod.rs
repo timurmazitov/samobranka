@@ -47,6 +47,11 @@ pub mod common;
 // the frontend band mirror cannot drift apart (see the module's doc).
 pub(crate) mod progress_scale;
 
+// The import/retranscription progress code registry and the prose/params
+// shapes both paths emit verbatim (native-i18n spec D7), shared for the same
+// reason (see the module's doc).
+pub(crate) mod progress_codes;
+
 // Shared constants
 pub mod constants;
 

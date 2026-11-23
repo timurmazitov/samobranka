@@ -21,10 +21,9 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use super::diarization_service::{
     decide_diarization, diarization_progress_event, emit_pass_progress, transcript_updated_payload,
-    DiarizationDecision, DiarizationPhase, DiarizationStatus,
-    DIARIZATION_DEFERRED_MESSAGE, DIARIZATION_FAILED_MESSAGE,
-    DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE, DIARIZATION_UNAVAILABLE_MESSAGE,
-    SPEAKER_NAMES_RESET_EVENT, SPEAKER_NAMES_RESET_MESSAGE, TRANSCRIPT_UPDATED_EVENT,
+    DiarizationDecision, DiarizationPhase, DiarizationStatus, DIARIZATION_DEFERRED_CODE,
+    DIARIZATION_FAILED_CODE, DIARIZATION_RUNTIME_UNAVAILABLE_CODE, DIARIZATION_UNAVAILABLE_CODE,
+    SPEAKER_NAMES_RESET_CODE, SPEAKER_NAMES_RESET_EVENT, TRANSCRIPT_UPDATED_EVENT,
 };
 use crate::database::repositories::meeting::MeetingsRepository;
 use crate::database::repositories::speaker;
@@ -89,21 +88,22 @@ pub enum DiarizationEvent {
     SpeakerNamesReset { meeting_id: String },
 }
 
-/// Message shown for a `diarization-unavailable` announcement.
+/// State code for a `diarization-unavailable` announcement.
 ///
-/// Native code is the source of truth for these texts; the frontend mirrors
-/// them. Missing model and missing runtime read differently on purpose so the
-/// user knows what to fix. The event itself fires for `failed` and for a pass
-/// that deferred after announcing `queued` (see
+/// The frontend catalog resolves the code to the user-facing sentence
+/// (native-i18n spec D8); missing model and missing runtime send different
+/// codes on purpose so the user knows what to fix. The event itself fires for
+/// `failed` and for a pass that deferred after announcing `queued` (see
 /// [`deferred_after_queue_events`]); the `NoModel`/`NoRuntime` arms stay
-/// because the spec makes native code the source of truth for those texts and
-/// requires the frontend to mirror them; the mapping is pinned by tests.
-pub fn unavailable_message(status: DiarizationStatus) -> &'static str {
+/// because the event's contract keeps them addressable, and the mapping is
+/// pinned by tests — on this side by the payload tests below and on the
+/// frontend by `tests/lib/live-diarization.test.ts`.
+pub fn unavailable_code(status: DiarizationStatus) -> &'static str {
     match status {
-        DiarizationStatus::NoRuntime => DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE,
-        DiarizationStatus::NoModel => DIARIZATION_UNAVAILABLE_MESSAGE,
-        DiarizationStatus::Deferred => DIARIZATION_DEFERRED_MESSAGE,
-        DiarizationStatus::Failed | DiarizationStatus::Ran => DIARIZATION_FAILED_MESSAGE,
+        DiarizationStatus::NoRuntime => DIARIZATION_RUNTIME_UNAVAILABLE_CODE,
+        DiarizationStatus::NoModel => DIARIZATION_UNAVAILABLE_CODE,
+        DiarizationStatus::Deferred => DIARIZATION_DEFERRED_CODE,
+        DiarizationStatus::Failed | DiarizationStatus::Ran => DIARIZATION_FAILED_CODE,
     }
 }
 
@@ -300,7 +300,14 @@ fn emit_events<R: Runtime>(app: &AppHandle<R>, events: &[DiarizationEvent]) {
                         "meeting_id": meeting_id,
                         "status": status,
                         "reason": error,
-                        "message": unavailable_message(*status),
+                        // State code, not prose (native-i18n spec D8): the
+                        // frontend catalog renders the sentence. The old
+                        // `message` field is gone because no listener renders
+                        // it anymore (grep-proven at ticket 07): the toasts
+                        // resolve the code, and the pass-state reducer keeps
+                        // reading `message` only as a diagnostic fallback for
+                        // payloads from an older build.
+                        "code": unavailable_code(*status),
                     }),
                 ) {
                     warn!("Failed to emit diarization-unavailable for {meeting_id}: {emit_error}");
@@ -311,7 +318,7 @@ fn emit_events<R: Runtime>(app: &AppHandle<R>, events: &[DiarizationEvent]) {
                     SPEAKER_NAMES_RESET_EVENT,
                     serde_json::json!({
                         "meeting_id": meeting_id,
-                        "message": SPEAKER_NAMES_RESET_MESSAGE,
+                        "code": SPEAKER_NAMES_RESET_CODE,
                     }),
                 ) {
                     warn!("Failed to emit speaker-names-reset for {meeting_id}: {error}");
@@ -794,7 +801,7 @@ mod tests {
     async fn the_queued_then_deferred_terminal_emits_one_diarization_unavailable() {
         // The emitting half of the race fix, on the mock app: the terminal
         // lands on the existing `diarization-unavailable` channel with the
-        // `deferred` status and the deferred sentence, and nothing else. The
+        // `deferred` status and the `deferred` code, and nothing else. The
         // frontend store already ends a running pass on any non-failed
         // payload of this channel (pinned in
         // `tests/lib/diarization-pass-state.test.ts`).
@@ -813,7 +820,7 @@ mod tests {
                     "meeting_id": "meeting-1",
                     "status": "deferred",
                     "reason": null,
-                    "message": DIARIZATION_DEFERRED_MESSAGE,
+                    "code": "deferred",
                 })
             )],
             "queued-then-deferred must emit exactly one terminal"
@@ -826,12 +833,12 @@ mod tests {
         // recording, not a breakdown. A failure would send them looking for
         // a broken engine.
         assert_eq!(
-            unavailable_message(DiarizationStatus::Deferred),
-            DIARIZATION_DEFERRED_MESSAGE
+            unavailable_code(DiarizationStatus::Deferred),
+            DIARIZATION_DEFERRED_CODE
         );
         assert_ne!(
-            unavailable_message(DiarizationStatus::Deferred),
-            unavailable_message(DiarizationStatus::Failed)
+            unavailable_code(DiarizationStatus::Deferred),
+            unavailable_code(DiarizationStatus::Failed)
         );
     }
 
@@ -951,20 +958,20 @@ mod tests {
     #[test]
     fn missing_model_and_missing_runtime_explain_themselves_differently() {
         assert_eq!(
-            unavailable_message(DiarizationStatus::NoModel),
-            DIARIZATION_UNAVAILABLE_MESSAGE
+            unavailable_code(DiarizationStatus::NoModel),
+            DIARIZATION_UNAVAILABLE_CODE
         );
         assert_eq!(
-            unavailable_message(DiarizationStatus::NoRuntime),
-            DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE
+            unavailable_code(DiarizationStatus::NoRuntime),
+            DIARIZATION_RUNTIME_UNAVAILABLE_CODE
         );
         assert_eq!(
-            unavailable_message(DiarizationStatus::Failed),
-            DIARIZATION_FAILED_MESSAGE
+            unavailable_code(DiarizationStatus::Failed),
+            DIARIZATION_FAILED_CODE
         );
         assert_ne!(
-            unavailable_message(DiarizationStatus::NoModel),
-            unavailable_message(DiarizationStatus::NoRuntime)
+            unavailable_code(DiarizationStatus::NoModel),
+            unavailable_code(DiarizationStatus::NoRuntime)
         );
     }
 
@@ -1299,7 +1306,7 @@ mod tests {
                     "meeting_id": "meeting-1",
                     "status": "failed",
                     "reason": "meeting has no recording folder",
-                    "message": DIARIZATION_FAILED_MESSAGE,
+                    "code": "failed",
                 })
             )],
             "the emitter threading must not change the terminal events"

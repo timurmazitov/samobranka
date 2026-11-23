@@ -23,28 +23,33 @@ use crate::audio_cpp_engine::catalog::{ModelInfo, ModelStatus, ModelTask};
 use crate::audio_cpp_engine::engine::SAMPLE_RATE;
 use crate::audio_cpp_engine::engine::load_native_engine;
 
-/// Hint emitted (and shown to the user) when speaker labels were skipped
-/// because the diarization model is not installed. One constant so the import,
-/// retranscription and saved-meeting paths cannot drift apart, and so the
-/// frontend has a single native text to mirror.
-pub const DIARIZATION_UNAVAILABLE_MESSAGE: &str =
-    "Speaker labels were skipped. Download the Nemotron-3-Diarization model in Settings to see who said what.";
+// State codes carried by the diarization terminal events (native-i18n spec
+// D8): `diarization-unavailable` sends one of the first four, chosen by the
+// pass status, and `speaker-names-reset` sends `SPEAKER_NAMES_RESET_CODE`.
+// The frontend catalog key `speakers.failures.<code>` is the single source of
+// truth for the user-facing sentence; the sentences themselves live only in
+// `frontend/src/i18n/locales/*/translation.json` (pinned by
+// `tests/lib/live-diarization.test.ts`, which resolves every code in both
+// locales). One module owns the five literals so every emit site — the
+// shared emitter in `diarization_run` and the two batch paths — sends the
+// same codes.
 
-/// Hint shown when the diarization model is installed but the audio.cpp
+/// Code emitted when speaker labels were skipped because the diarization
+/// model is not installed. The import, retranscription and saved-meeting
+/// paths share it so they cannot drift apart.
+pub const DIARIZATION_UNAVAILABLE_CODE: &str = "unavailable";
+
+/// Code emitted when the diarization model is installed but the audio.cpp
 /// native library is not available on this machine.
-pub const DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE: &str =
-    "Speaker labels were skipped. The audio.cpp engine is unavailable on this system.";
+pub const DIARIZATION_RUNTIME_UNAVAILABLE_CODE: &str = "runtime_unavailable";
 
-/// Hint shown when diarization was attempted and the pass itself failed.
-pub const DIARIZATION_FAILED_MESSAGE: &str =
-    "Speaker labels were skipped because diarization failed.";
+/// Code emitted when diarization was attempted and the pass itself failed.
+pub const DIARIZATION_FAILED_CODE: &str = "failed";
 
-/// Hint carried by a `deferred` pass that had already announced its `queued`
+/// Code carried by a `deferred` pass that had already announced its `queued`
 /// stage: the pass was postponed because a recording started while it waited
-/// in the queue. Mirrored by the frontend's `DIARIZATION_DEFERRED_MESSAGE`
-/// (pinned by `tests/lib/live-diarization.test.ts`).
-pub const DIARIZATION_DEFERRED_MESSAGE: &str =
-    "Speaker labels were postponed because a recording is in progress. Run diarization again once the recording stops.";
+/// in the queue.
+pub const DIARIZATION_DEFERRED_CODE: &str = "deferred";
 
 /// Event emitted (and shown to the user) when a recount of the speaker labels
 /// removed every name the meeting had, so the names look lost on purpose.
@@ -52,9 +57,8 @@ pub const DIARIZATION_DEFERRED_MESSAGE: &str =
 /// cannot drift apart.
 pub const SPEAKER_NAMES_RESET_EVENT: &str = "speaker-names-reset";
 
-/// Text of the [`SPEAKER_NAMES_RESET_EVENT`] hint.
-pub const SPEAKER_NAMES_RESET_MESSAGE: &str =
-    "Speaker names were reset because the voices were recomputed.";
+/// Code of the [`SPEAKER_NAMES_RESET_EVENT`] hint.
+pub const SPEAKER_NAMES_RESET_CODE: &str = "reset";
 
 /// Native event announcing that a saved meeting's transcript gained speaker
 /// labels. The meeting page subscribes to it instead of the old window event,
@@ -148,10 +152,13 @@ impl DiarizationPhase {
         }
     }
 
-    /// The user-facing stage sentence. The frontend keeps its own i18n strings
-    /// keyed by stage and may override this text; the message stays so the
-    /// event is self-describing for logs and for bars that print the raw
-    /// payload message like the import/retranscription progress events do.
+    /// The self-describing stage sentence for logs and raw-payload readers.
+    /// The frontend never renders this text: every surface resolves its own
+    /// i18n string through `diarizationStageMessage()` (`speakers.stages.*`),
+    /// the reducer drops stages it does not know instead of falling back to
+    /// the message, and no component reads the stored `message` field
+    /// (verified for native-i18n ticket 07 — see the ticket's close-out).
+    /// The message stays so the event is self-describing for logs.
     fn message(self) -> &'static str {
         match self {
             Self::Queued => "Waiting for the diarization queue...",

@@ -37,6 +37,7 @@ import {
 } from '@/lib/diarizationAvailability';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
+import { retranscribeProgressText, retranscribeStageLabel } from '@/lib/native-progress';
 
 interface RetranscribeDialogProps {
   open: boolean;
@@ -68,6 +69,9 @@ interface RetranscriptionProgress {
   stage: string;
   progress_percentage: number;
   message: string;
+  /** Stable i18n code added by the native side (spec D7); see `lib/native-progress`. */
+  code?: string;
+  params?: Record<string, unknown>;
 }
 
 interface RetranscriptionResult {
@@ -342,7 +346,7 @@ export function RetranscribeDialog({
         (event) => {
           if (event.payload.meeting_id && event.payload.meeting_id !== meetingId) return;
           if (!shouldToastDiarizationUnavailable(event.payload.status)) return;
-          showDiarizationFailure(toast, event.payload.message);
+          showDiarizationFailure(toast, event.payload);
         }
       );
       if (cleanedUpRef.current) {
@@ -474,19 +478,27 @@ export function RetranscribeDialog({
   const barPercent = isComplete
     ? 100
     : retranscriptionBarPercentage(progress?.progress_percentage ?? null, passState);
-  // The stage caption: the native stage word while the transcript is being
-  // produced (as before); from the save on, the shared pass state's stage
-  // sentence, falling back to the diarization sentence before the pass speaks.
+  // The stage caption: the localized native stage word while the transcript is
+  // being produced (an unknown stage token stays raw — a debug affordance for
+  // a future native stage, never a blank); from the save on, the shared pass
+  // state's stage sentence, falling back to the diarization sentence before
+  // the pass speaks.
   const barStage = isComplete
     ? t('retranscribe.stages.complete')
     : passState && passState.phase === 'running'
       ? diarizationStageMessage(passState.stage!)
       : progress?.stage === RETRANSCRIPTION_DIARIZING_STAGE
         ? t('retranscribe.stages.diarizing')
-        : progress?.stage ?? '';
+        : progress
+          ? retranscribeStageLabel(progress.stage)
+          : '';
+  // The coded message resolves through `retranscribe.progress.<code>`; the
+  // English `message` prose is the fallback for an unknown or absent code
+  // (native-i18n spec D7), never a blank line.
+  const nativeMessage = retranscribeProgressText(progress);
   const barMessage = isComplete
     ? t('retranscribe.stages.complete')
-    : progress?.message ?? t('retranscribe.descriptionProcessing');
+    : nativeMessage ?? progress?.message ?? t('retranscribe.descriptionProcessing');
   const showBar = !error && (inProgress || isComplete);
 
   return (
@@ -517,7 +529,7 @@ export function RetranscribeDialog({
           </DialogTitle>
           <DialogDescription>
             {inProgress
-              ? progress?.message || t('retranscribe.descriptionProcessing')
+              ? nativeMessage || progress?.message || t('retranscribe.descriptionProcessing')
               : error
                 ? t('retranscribe.descriptionFailed')
                 : t('retranscribe.description')}

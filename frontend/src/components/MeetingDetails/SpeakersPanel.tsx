@@ -22,10 +22,6 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import {
-  DIARIZATION_NO_MODEL_MESSAGE,
-  DIARIZATION_NO_RUNTIME_MESSAGE,
-  DIARIZATION_NO_SPEAKERS_FOUND_MESSAGE,
-  DIARIZATION_UNAVAILABLE_HINT,
   diarizationStageMessage,
   diarizationStatusMessage,
   hasInstalledDiarizationModel,
@@ -453,7 +449,7 @@ export function SpeakersPanel({
         if (result.labeled_segments === 0) {
           // A pass that found no distinct voices is a success, but an empty
           // list right after a click needs an explanation.
-          setDiarizationReason(DIARIZATION_NO_SPEAKERS_FOUND_MESSAGE);
+          setDiarizationReason(i18n.t('speakers.failures.noSpeakersFound'));
         }
         return;
       }
@@ -680,14 +676,14 @@ export function SpeakersPanel({
                   silent and lets the run report the real status. */}
               {hasDiarizationModel === false ? (
                 <p data-testid="diarization-model-hint" className="text-sm text-muted-foreground">
-                  {DIARIZATION_NO_MODEL_MESSAGE}
+                  {t('speakers.failures.unavailable')}
                 </p>
               ) : hasRuntime === false ? (
                 <p data-testid="diarization-runtime-hint" className="text-sm text-muted-foreground">
-                  {DIARIZATION_NO_RUNTIME_MESSAGE}
+                  {t('speakers.failures.runtime_unavailable')}
                 </p>
               ) : (
-                <p className="text-sm text-muted-foreground">{DIARIZATION_UNAVAILABLE_HINT}</p>
+                <p className="text-sm text-muted-foreground">{t('speakers.hints.noModel')}</p>
               )}
               <div className="flex justify-center">
                 <Button
@@ -697,9 +693,9 @@ export function SpeakersPanel({
                   disabled={isDiarizing || hasDiarizationModel === false || hasRuntime === false}
                   title={
                     hasDiarizationModel === false
-                      ? DIARIZATION_NO_MODEL_MESSAGE
+                      ? t('speakers.failures.unavailable')
                       : hasRuntime === false
-                        ? DIARIZATION_NO_RUNTIME_MESSAGE
+                        ? t('speakers.failures.runtime_unavailable')
                         : t('speakers.runTooltip')
                   }
                 >

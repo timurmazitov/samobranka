@@ -52,6 +52,26 @@ export function normalizeAppLanguage(tag: string | null | undefined): AppLanguag
   return isAppLanguage(primary) ? primary : DEFAULT_LANGUAGE;
 }
 
+/**
+ * The full startup resolution: a stored choice wins over the OS locale in
+ * both directions; with no usable stored value the OS locale decides through
+ * `normalizeAppLanguage`, and English decides when neither is available.
+ *
+ * The Rust side reproduces this order in
+ * `frontend/src-tauri/src/l10n/language.rs::resolve_language`; both sides are
+ * held to the shared case vector in that file by
+ * `tests/lib/app-language-parity.test.ts`. A stored value only counts when it
+ * is an exact supported code — `isAppLanguage` is case-sensitive — so a
+ * hand-edited `"RU"` falls through to the OS locale instead of erroring.
+ */
+export function resolveAppLanguage(
+  stored: string | null | undefined,
+  osLocale: string | null | undefined,
+): AppLanguageCode {
+  if (isAppLanguage(stored)) return stored;
+  return normalizeAppLanguage(osLocale);
+}
+
 /** The OS locale as the webview reports it, or null when unavailable. */
 export function systemLocale(): string | null {
   if (typeof navigator === 'undefined') return null;

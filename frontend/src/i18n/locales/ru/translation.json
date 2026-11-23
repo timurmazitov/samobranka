@@ -146,7 +146,11 @@
       "viewMeeting": "Открыть встречу"
     },
     "transcriptCopied": "Транскрипция скопирована в буфер обмена",
-    "fallbackMeetingTitle": "Встреча {{timestamp}}"
+    "fallbackMeetingTitle": "Встреча {{timestamp}}",
+    "micSwitched": "Микрофон для этой встречи переключён на «{{label}}».",
+    "micFallbackFailed": "Не удалось переключиться на микрофон «{{label}}»: {{error}}",
+    "micUnavailable": "Микрофон недоступен — запись только системного звука.",
+    "micRecoveryExhausted": "Не удалось восстановить микрофон «{{label}}» — запись продолжается без микрофона. Остановите запись и начните новую."
   },
   "recordingSettings": {
     "title": "Настройки записи",
@@ -190,8 +194,25 @@
     "cancelledToast": "Повторная транскрибация отменена",
     "diarizationHint": "Диалог можно закрыть — диаризация продолжится и будет видна в панели спикеров встречи.",
     "stages": {
+      "decoding": "Декодирование",
+      "vad": "Поиск речи",
+      "transcribing": "Транскрибация",
+      "saving": "Сохранение",
       "diarizing": "Диаризация…",
       "complete": "Повторная транскрибация завершена"
+    },
+    "progress": {
+      "decoding_file": "Декодирование аудиофайла…",
+      "converting_format": "Преобразование формата аудио…",
+      "detecting_segments": "Определение речевых сегментов…",
+      "detecting_segments_progress_one": "Определение речевых сегментов… {{percent}}% (найден {{count}} сегмент)",
+      "detecting_segments_progress_few": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегмента)",
+      "detecting_segments_progress_many": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегментов)",
+      "detecting_segments_progress_other": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегментов)",
+      "loading_engine": "Загрузка движка транскрибации…",
+      "transcribing_segment": "Транскрибация: сегмент {{count}} из {{total}} ({{duration}} с)…",
+      "saving_transcripts": "Сохранение транскрипций…",
+      "writing_files": "Запись файлов транскрипции…"
     },
     "actions": {
       "done": "Готово"
@@ -342,8 +363,34 @@
       "done": "Готово"
     },
     "stages": {
+      "copying": "Копирование",
+      "decoding": "Декодирование",
+      "resampling": "Преобразование",
+      "vad": "Поиск речи",
+      "transcribing": "Транскрибация",
+      "saving": "Сохранение",
       "diarizing": "Диаризация…",
       "complete": "Импорт завершён"
+    },
+    "progress": {
+      "creating_folder": "Создание папки встречи…",
+      "copying_file": "Копирование аудиофайла…",
+      "decoding_file": "Декодирование аудиофайла…",
+      "decoding_percent": "Декодирование аудио: {{percent}}%",
+      "decoding_complete": "Декодирование завершено",
+      "ffmpeg_converting": "Преобразование формата аудио через FFmpeg…",
+      "ffmpeg_complete": "Преобразование FFmpeg завершено",
+      "converting_format": "Преобразование формата аудио…",
+      "resampling_percent": "Передискретизация аудио: {{percent}}%",
+      "detecting_segments": "Определение речевых сегментов…",
+      "detecting_segments_progress_one": "Определение речевых сегментов… {{percent}}% (найден {{count}} сегмент)",
+      "detecting_segments_progress_few": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегмента)",
+      "detecting_segments_progress_many": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегментов)",
+      "detecting_segments_progress_other": "Определение речевых сегментов… {{percent}}% (найдено {{count}} сегментов)",
+      "loading_engine": "Загрузка движка транскрибации…",
+      "transcribing_segment": "Транскрибация: сегмент {{count}} из {{total}} ({{duration}} с)…",
+      "creating_meeting": "Создание встречи…",
+      "writing_files": "Запись файлов транскрипции…"
     },
     "diarizationHint": "Диалог можно закрыть — диаризация продолжится и будет видна в панели спикеров встречи.",
     "toast": {
@@ -616,11 +663,27 @@
       "openModelsFolder": "Открыть папку моделей",
       "runtimeUnavailable": "Движок диаризации недоступен в этой системе",
       "runtimeUnavailableDescription": "Модель всё равно можно скачать: разметка спикеров заработает, когда нативная библиотека audio.cpp станет доступна.",
-      "taskDiarization": "Диаризация"
+      "taskDiarization": "Диаризация",
+      "descriptions": {
+        "nemotron_3_diar": "Диаризация спикеров (Nemotron-3, BF16, до 8 спикеров в порядке появления). Определяет, кому из спикеров принадлежит каждый фрагмент транскрипции."
+      }
     },
     "transcribeCpp": {
       "failedToLoadModels": "Не удалось загрузить модели transcribe.cpp",
-      "openModelsFolder": "Открыть папку моделей"
+      "openModelsFolder": "Открыть папку моделей",
+      "quantizationNote": "Квантование: {{quantization}}.",
+      "descriptions": {
+        "gigaam-v3-ctc": "Распознавание русской речи (GigaAM v3 CTC). Подходит для встреч на русском языке: высокая точность транскрибации.",
+        "gigaam-v3-e2e-ctc": "Распознавание русской речи (GigaAM v3 end-to-end CTC). Лучшее соотношение точности и размера для встреч на русском языке.",
+        "gigaam-v3-rnnt": "Распознавание русской речи (GigaAM v3 RNN-T). Пунктуация точнее, чем у варианта CTC.",
+        "gigaam-v3-e2e-rnnt": "Распознавание русской речи (GigaAM v3 end-to-end RNN-T). Вариант с упором на пунктуацию в полном размере.",
+        "parakeet-tdt-0.6b-v3": "Многоязычное распознавание речи (NVIDIA Parakeet TDT 0.6B v3). Уверенно работает с русским и английским.",
+        "parakeet-ultra": "Многоязычное распознавание речи (Parakeet Ultra). Провайдер по умолчанию: баланс качества на русском и английском при умеренном размере.",
+        "qwen3-asr-0.6b": "Многоязычное распознавание речи (Qwen3-ASR 0.6B). Лучшая точность на русском в каталоге.",
+        "qwen3-asr-1.7b": "Многоязычное распознавание речи (Qwen3-ASR 1.7B). Лучшая точность на русском среди семейств каталога.",
+        "whisper-large-v3-turbo": "Многоязычное распознавание речи (OpenAI Whisper large-v3 Turbo). Быстрый запасной вариант для редких языков.",
+        "whisper-large-v3": "Многоязычное распознавание речи (OpenAI Whisper large-v3). Самая точная версия Whisper."
+      }
     },
     "builtIn": {
       "downloaded": "Модель {{model}} успешно скачана",
@@ -673,6 +736,8 @@
     "unavailableDevice": "{{name}} — недоступен — выберите устройство",
     "noMicrophones": "Микрофоны не найдены",
     "microphoneLevels": "Уровень микрофона:",
+    "meterActive": "Активен",
+    "meterInactive": "Не активен",
     "microphoneInfo": "Записывает голос и окружающий звук",
     "systemAudio": "Системный звук",
     "systemAudioAria": "О выборе системного звука",
@@ -911,6 +976,9 @@
       "changesSaved": "Изменения сохранены",
       "changesSaveFailed": "Не удалось сохранить изменения"
     },
+    "meetingFolder": {
+      "openFailed": "Не удалось открыть папку записи"
+    },
     "templates": {
       "selected": "Шаблон выбран",
       "selectedDescription": "Конспект будет создан по шаблону «{{name}}»"
@@ -953,6 +1021,17 @@
       "applying_labels": "Обновляем спикеров…"
     },
     "catalogWarning": "Не удалось прочитать список моделей диаризации. Запуск покажет реальное состояние.",
+    "failures": {
+      "unavailable": "Метки спикеров пропущены. Скачайте модель Nemotron-3-Diarization в настройках, чтобы видеть, кто что сказал.",
+      "runtime_unavailable": "Метки спикеров пропущены. Движок audio.cpp недоступен в этой системе.",
+      "failed": "Метки спикеров пропущены: диаризация не удалась.",
+      "deferred": "Метки спикеров отложены: идёт запись. Запустите диаризацию после её остановки.",
+      "reset": "Имена спикеров сброшены: голоса пересчитаны.",
+      "noSpeakersFound": "Диаризация завершилась, но разные спикеры в этой записи не найдены."
+    },
+    "hints": {
+      "noModel": "Скачайте модель Nemotron-3-Diarization в настройках, чтобы видеть, кто что сказал."
+    },
     "passFailed": "Диаризация не удалась: {{reason}}",
     "passFailedNoReason": "Диаризация не удалась",
     "retry": "Повторить",
@@ -1058,7 +1137,9 @@
       "deleteBlocks_one": "Удалить блок",
       "deleteBlocks_few": "Удалить {{count}} блока",
       "deleteBlocks_many": "Удалить {{count}} блоков",
-      "deleteBlocks_other": "Удалить {{count}} блоков"
+      "deleteBlocks_other": "Удалить {{count}} блоков",
+      "undo": "Отменить",
+      "redo": "Повторить"
     },
     "editor": {
       "placeholder": "Введите «/» для команд...",
@@ -1088,6 +1169,25 @@
       "tabTranscript": "Транскрипция",
       "tabSummary": "Конспект",
       "valueText": "Панель транскрипции — {{percent}} процентов"
+    }
+  },
+  "transcription": {
+    "errors": {
+      "engine_init_failed": "Не удалось запустить распознавание речи. Необходимо проверить настройки модели.",
+      "runtime_unavailable": "Не удалось инициализировать распознавание речи. Требуется перезапустить Samobranka. Если проблема повторяется, необходимо восстановить или переустановить приложение.",
+      "model_not_installed": "Модель Transcribe.cpp не установлена. Необходимо скачать модель транскрибации: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_not_found": "Модель Transcribe.cpp «{{model}}» недоступна. Необходимо скачать модель транскрибации: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_not_downloaded": "Модель Transcribe.cpp «{{model}}» не загружена. Необходимо скачать её: Настройки → Модель транскрибации → Модели Transcribe.cpp.",
+      "model_downloading": "Модель Transcribe.cpp «{{model}}» ещё загружается ({{percent}}%). Требуется дождаться завершения загрузки.",
+      "model_corrupted": "Модель Transcribe.cpp «{{model}}» повреждена. Необходимо удалить её и скачать заново в Настройках.",
+      "model_errored": "Модель Transcribe.cpp «{{model}}» завершилась с ошибкой: {{detail}}. Необходимо скачать её заново в Настройках.",
+      "provider_not_loaded": "Модель транскрибации не загружена.",
+      "audio_too_short": "Аудиофрагмент слишком короткий: {{samples}} отсчётов при минимуме {{minimum}}.",
+      "engine_failed": "Сбой движка транскрибации: {{detail}}",
+      "language_unsupported": "Язык «{{language}}» не поддерживается этим провайдером.",
+      "model_manager_uninitialized": "Диспетчер моделей Transcribe.cpp не инициализирован. Требуется перезапустить Samobranka и повторить попытку.",
+      "model_discovery_failed": "Не удалось найти модели Transcribe.cpp: {{detail}}",
+      "model_load_failed": "Не удалось загрузить модель Transcribe.cpp: {{detail}}"
     }
   }
 }

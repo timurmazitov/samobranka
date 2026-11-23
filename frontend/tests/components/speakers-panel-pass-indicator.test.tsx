@@ -402,7 +402,7 @@ function emitFailure(bridge: ReturnType<typeof fakeListen>, reason: string | nul
   emit(bridge, 'diarization-unavailable', {
     meeting_id: 'meeting-a',
     status: 'failed',
-    ...(reason ? { reason, message: 'Speaker labels were skipped because diarization failed.' } : {}),
+    ...(reason ? { reason, code: 'failed' as const } : {}),
   });
 }
 
@@ -585,10 +585,10 @@ test('without the native runtime the panel explains itself and blocks the run', 
   const instance = await renderPanel(store);
   await store.settled();
 
-  expect(text(instance)).toContain('audio.cpp engine is unavailable');
+  expect(text(instance)).toContain(en.speakers.failures.runtime_unavailable);
   const button = diarizeButton(instance);
   expect(button.props.disabled).toBeTrue();
-  expect(String(button.props.title)).toContain('audio.cpp engine is unavailable');
+  expect(String(button.props.title)).toContain(en.speakers.failures.runtime_unavailable);
 });
 
 test('a missing model states the download hint explicitly in the panel body', async () => {
@@ -601,7 +601,7 @@ test('a missing model states the download hint explicitly in the panel body', as
 
   const hint = instance.root.find((n) => n.props?.['data-testid'] === 'diarization-model-hint');
   expect(hint).toBeDefined();
-  expect(nodeText(hint)).toContain('Download the Nemotron-3-Diarization model');
+  expect(nodeText(hint)).toContain(en.speakers.failures.unavailable);
   expect(diarizeButton(instance).props.disabled).toBeTrue();
 });
 
@@ -616,7 +616,7 @@ test('the model hint outranks the runtime hint when both are missing', async () 
   const instance = await renderPanel(store);
   await store.settled();
 
-  expect(text(instance)).toContain('Download the Nemotron-3-Diarization model');
+  expect(text(instance)).toContain(en.speakers.failures.unavailable);
   expect(
     instance.root.findAll((n) => n.props?.['data-testid'] === 'diarization-runtime-hint'),
   ).toHaveLength(0);

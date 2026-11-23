@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import type { TranscriptionErrorPayload } from '@/services/transcriptService';
+import { transcriptionErrorText } from '@/lib/transcription-error';
 
 export type ModalType =
   | 'modelSettings'
@@ -133,7 +134,11 @@ export function useModalState(): UseModalStateReturn {
         console.log('Setting up transcription-error listener...');
         unlistenFn = await listen<TranscriptionErrorPayload>('transcription-error', (event) => {
           console.log('Transcription error received:', event.payload);
-          const { userMessage, actionable } = event.payload;
+          const { actionable } = event.payload;
+          // Resolve the payload's stable `code` through the catalog; an
+          // unknown or absent code keeps the English `userMessage` Rust
+          // emits as the diagnostic fallback (native-i18n spec D7).
+          const userMessage = transcriptionErrorText(event.payload);
 
           if (actionable) {
             // This is a model-related error that requires user action

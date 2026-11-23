@@ -16,6 +16,8 @@
 import { afterAll, afterEach, beforeEach, expect, jest, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
+import en from '../../src/i18n/locales/en/translation.json';
+
 // The hook reaches for `window` (the Rust bridge) and `sessionStorage` (the
 // folder path handed over by the native `recording-stopped` event). Bun has no
 // DOM, so both are stood up here instead of pulling in a browser environment.
@@ -249,7 +251,7 @@ async function showPage() {
   await act(async () => { renderer = create(<Harness />); });
   await act(async () => {
     handlers.get('recording-stopped')?.({
-      payload: { message: 'stopped', folder_path: '/recordings/meeting-1', meeting_name: 'Saved meeting' },
+      payload: { folder_path: '/recordings/meeting-1', meeting_name: 'Saved meeting' },
     });
     await settle();
   });
@@ -342,7 +344,7 @@ test('only a failed pass toasts; configuration statuses stay silent', async () =
     expect(notify.error).toHaveBeenCalledTimes(speaks ? 1 : 0);
     if (speaks) {
       expect(notify.error).toHaveBeenCalledWith('Diarization failed', {
-        description: 'Speaker labels were skipped because diarization failed.',
+        description: en.speakers.failures.failed,
       });
     }
 

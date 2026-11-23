@@ -527,6 +527,8 @@ mod tests {
             stage: "transcribing".to_string(),
             progress_percentage: 42,
             message: "Transcribing segment 1 of 2 (1.0s)...".to_string(),
+            code: None,
+            params: None,
         })
         .unwrap();
         assert_eq!(
@@ -549,6 +551,8 @@ mod tests {
             stage: "transcribing".to_string(),
             progress_percentage: 42,
             message: "Transcribing segment 1 of 2 (1.0s)...".to_string(),
+            code: None,
+            params: None,
         })
         .unwrap();
         assert_eq!(import_progress["stage"], "transcribing");

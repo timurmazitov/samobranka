@@ -43,6 +43,7 @@ pub mod config;
 pub mod console_utils;
 pub mod database;
 pub mod doodle;
+pub mod error_codes;
 pub mod export;
 pub mod notifications;
 pub mod ollama;
@@ -50,6 +51,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod anthropic;
 pub mod groq;
+pub mod l10n;
 pub mod model_downloader;
 pub mod openrouter;
 pub mod state;
@@ -578,6 +580,13 @@ pub fn run() {
 
             log::info!("Starting application...");
             log::info!("Application setup complete");
+
+            // Resolve the interface language before the tray exists (native-i18n
+            // spec D3/D4): reads `app_language` from preferences.json, falls
+            // back to the OS locale, keeps the value in managed state, and
+            // registers the `app-language-changed` listener. Must precede
+            // `create_tray` so ticket 03's menu build can read the state.
+            l10n::language::init_app_language(_app.handle());
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {

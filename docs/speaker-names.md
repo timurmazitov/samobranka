@@ -44,7 +44,7 @@ Import and retranscription no longer diarize inline: they commit the meeting wit
 
 ## `speaker-names-reset`
 
-Emitted (payload `{ meeting_id, message }`) by the recount paths above when names were lost. `message` is the user-facing explanation ("Speaker names were reset because the voices were recomputed."). [useSpeakerNamesResetListener.ts](../frontend/src/hooks/useSpeakerNamesResetListener.ts) shows it as a toast and refetches the open meeting's transcripts and speaker list. The event always names a meeting: an import saves the meeting before the diarization pass runs, so by the time a recount can drop names there is an id to report, and the page only reacts to its own meeting.
+Emitted (payload `{ meeting_id, code }`, with `code` always `"reset"`) by the recount paths above when names were lost. The payload carries a state code, not prose: [useSpeakerNamesResetListener.ts](../frontend/src/hooks/useSpeakerNamesResetListener.ts) resolves `speakers.failures.<code>` from the frontend catalog through `t()` — the single source of truth for the sentence the user reads — and falls back to the payload's diagnostic `message` only for a code this build does not know (native-i18n spec D7). The hook shows it as a toast and refetches the open meeting's transcripts and speaker list. The event always names a meeting: an import saves the meeting before the diarization pass runs, so by the time a recount can drop names there is an id to report, and the page only reacts to its own meeting.
 
 ## Where names appear
 

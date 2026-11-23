@@ -84,7 +84,10 @@ pub struct ModelInfo {
     pub size_mb: u32,
     /// Exact artifact size in bytes; downloads are validated against it.
     pub size_bytes: u64,
-    /// Catalog description (purpose and trade-offs).
+    /// Catalog description (purpose and trade-offs) in English. The model
+    /// card resolves `models.audioCpp.descriptions.<family>` from the
+    /// frontend catalog instead (native-i18n spec D6); this prose is the
+    /// fallback for a family whose keys have not landed yet.
     pub description: String,
     /// Current installation state.
     pub status: ModelStatus,
@@ -101,6 +104,7 @@ pub struct ModelSpec {
     pub filename: &'static str,
     pub size_mb: u32,
     pub exact_bytes: u64,
+    /// English fallback prose; see [`ModelInfo::description`].
     pub description: &'static str,
     pub source_url: &'static str,
 }
