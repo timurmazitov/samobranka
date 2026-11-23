@@ -352,3 +352,12 @@ candidates are not lost. Not implemented by this spec:
   OS-drawn out-of-scope surfaces that are (the "starts in {} minutes"
   notification). No Rust code imports it for progress, which is the intended
   division, not drift.
+- 2026-11-23 (review fix): **`speakers.failures.unavailable` /
+  `speakers.hints.noModel` «Скачайте модель Nemotron-3-Diarization…» left
+  as-is** (ticket 07 strings, outside the review's `transcription.errors.*`
+  scope): each opens with an impersonal sentence («Метки спикеров
+  пропущены.»), the imperative is a hint in the catalog's pre-existing style
+  (`models.builtIn.empty`, `settingsSummary.model.ollamaNotInstalledDescription`
+  — «Скачайте …»), and Nemotron-3-Diarization is the only diarization model —
+  a necessary name, not a baked-in default recommendation like the
+  `transcription.errors.model_not_installed` one ticket 05 removed.

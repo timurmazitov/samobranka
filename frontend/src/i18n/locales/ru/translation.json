@@ -1185,7 +1185,7 @@
       "audio_too_short": "Аудиофрагмент слишком короткий: {{samples}} отсчётов при минимуме {{minimum}}.",
       "engine_failed": "Сбой движка транскрибации: {{detail}}",
       "language_unsupported": "Язык «{{language}}» не поддерживается этим провайдером.",
-      "model_manager_uninitialized": "Диспетчер моделей Transcribe.cpp не инициализирован. Перезапустите Samobranka и повторите попытку.",
+      "model_manager_uninitialized": "Диспетчер моделей Transcribe.cpp не инициализирован. Требуется перезапустить Samobranka и повторить попытку.",
       "model_discovery_failed": "Не удалось найти модели Transcribe.cpp: {{detail}}",
       "model_load_failed": "Не удалось загрузить модель Transcribe.cpp: {{detail}}"
     }
