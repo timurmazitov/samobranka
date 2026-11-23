@@ -146,7 +146,11 @@
       "viewMeeting": "View Meeting"
     },
     "transcriptCopied": "Transcript copied to clipboard",
-    "fallbackMeetingTitle": "Meeting {{timestamp}}"
+    "fallbackMeetingTitle": "Meeting {{timestamp}}",
+    "micSwitched": "Microphone switched to {{label}} for this meeting.",
+    "micFallbackFailed": "Could not switch to microphone {{label}}: {{error}}",
+    "micUnavailable": "No microphone available — recording system audio only.",
+    "micRecoveryExhausted": "Microphone '{{label}}' could not be recovered — recording continues without a microphone. Stop the recording and start a new one."
   },
   "recordingSettings": {
     "title": "Recording Settings",
@@ -677,6 +681,8 @@
     "unavailableDevice": "{{name}} — Unavailable — choose a device",
     "noMicrophones": "No microphone devices found",
     "microphoneLevels": "Microphone Levels:",
+    "meterActive": "Active",
+    "meterInactive": "Inactive",
     "microphoneInfo": "Records your voice and ambient sound",
     "systemAudio": "System Audio",
     "systemAudioAria": "About system audio selection",
@@ -910,6 +916,9 @@
       "changesSaved": "Changes saved successfully",
       "changesSaveFailed": "Failed to save changes"
     },
+    "meetingFolder": {
+      "openFailed": "Failed to open recording folder"
+    },
     "templates": {
       "selected": "Template selected",
       "selectedDescription": "Using \"{{name}}\" template for summary generation"
@@ -1049,7 +1058,9 @@
       "copyBlocks_one": "Copy block",
       "copyBlocks_other": "Copy {{count}} blocks",
       "deleteBlocks_one": "Delete block",
-      "deleteBlocks_other": "Delete {{count}} blocks"
+      "deleteBlocks_other": "Delete {{count}} blocks",
+      "undo": "Undo",
+      "redo": "Redo"
     },
     "editor": {
       "placeholder": "Type '/' for commands...",
