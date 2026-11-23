@@ -146,7 +146,11 @@
       "viewMeeting": "Открыть встречу"
     },
     "transcriptCopied": "Транскрипция скопирована в буфер обмена",
-    "fallbackMeetingTitle": "Встреча {{timestamp}}"
+    "fallbackMeetingTitle": "Встреча {{timestamp}}",
+    "micSwitched": "Микрофон для этой встречи переключён на «{{label}}».",
+    "micFallbackFailed": "Не удалось переключиться на микрофон «{{label}}»: {{error}}",
+    "micUnavailable": "Микрофон недоступен — запись только системного звука.",
+    "micRecoveryExhausted": "Не удалось восстановить микрофон «{{label}}» — запись продолжается без микрофона. Остановите запись и начните новую."
   },
   "recordingSettings": {
     "title": "Настройки записи",
@@ -673,6 +677,8 @@
     "unavailableDevice": "{{name}} — недоступен — выберите устройство",
     "noMicrophones": "Микрофоны не найдены",
     "microphoneLevels": "Уровень микрофона:",
+    "meterActive": "Активен",
+    "meterInactive": "Не активен",
     "microphoneInfo": "Записывает голос и окружающий звук",
     "systemAudio": "Системный звук",
     "systemAudioAria": "О выборе системного звука",
@@ -911,6 +917,9 @@
       "changesSaved": "Изменения сохранены",
       "changesSaveFailed": "Не удалось сохранить изменения"
     },
+    "meetingFolder": {
+      "openFailed": "Не удалось открыть папку записи"
+    },
     "templates": {
       "selected": "Шаблон выбран",
       "selectedDescription": "Конспект будет создан по шаблону «{{name}}»"
@@ -1058,7 +1067,9 @@
       "deleteBlocks_one": "Удалить блок",
       "deleteBlocks_few": "Удалить {{count}} блока",
       "deleteBlocks_many": "Удалить {{count}} блоков",
-      "deleteBlocks_other": "Удалить {{count}} блоков"
+      "deleteBlocks_other": "Удалить {{count}} блоков",
+      "undo": "Отменить",
+      "redo": "Повторить"
     },
     "editor": {
       "placeholder": "Введите «/» для команд...",

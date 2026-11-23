@@ -15,7 +15,6 @@ import { toast } from 'sonner';
 import i18n from '@/i18n';
 
 const TRANSCRIPTION_RUNTIME_START_ERROR_CODE = 'TRANSCRIPTION_RUNTIME_INITIALIZATION_FAILED';
-const TRANSCRIPTION_RUNTIME_USER_MESSAGE = 'Speech recognition could not initialize. Restart Samobranka. If the problem continues, repair or reinstall the app.';
 
 const isTranscriptionRuntimeStartError = (error: unknown) =>
   String(error) === TRANSCRIPTION_RUNTIME_START_ERROR_CODE;
@@ -152,7 +151,7 @@ export function useRecordingStart(
       setMeetingTitle(randomTitle);
 
       // Set STARTING status before initiating backend recording
-      setStatus(RecordingStatus.STARTING, 'Initializing recording...');
+      setStatus(RecordingStatus.STARTING);
 
       // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);
@@ -191,9 +190,7 @@ export function useRecordingStart(
         toast.error(i18n.t('toasts.recording.startTimedOut'));
       }
 
-      setStatus(RecordingStatus.ERROR, isRuntimeError
-        ? TRANSCRIPTION_RUNTIME_USER_MESSAGE
-        : errorMsg);
+      setStatus(RecordingStatus.ERROR);
       setIsRecording(false); // Reset state on error
       if (isRuntimeError) return;
       // Re-throw so RecordingControls can handle device-specific errors
@@ -240,7 +237,7 @@ export function useRecordingStart(
             const generatedMeetingTitle = generateMeetingTitle();
 
             // Set STARTING status before initiating backend recording
-            setStatus(RecordingStatus.STARTING, 'Initializing recording...');
+            setStatus(RecordingStatus.STARTING);
 
             console.log('Auto-starting backend recording with meeting:', generatedMeetingTitle);
             const result = await recordingService.startRecordingWithDevices(
@@ -267,9 +264,7 @@ export function useRecordingStart(
               setStatus(RecordingStatus.RECORDING);
             } else {
               const isRuntimeError = isTranscriptionRuntimeStartError(error);
-              setStatus(RecordingStatus.ERROR, isRuntimeError
-                ? TRANSCRIPTION_RUNTIME_USER_MESSAGE
-                : errorMsg);
+              setStatus(RecordingStatus.ERROR);
               if (!isRuntimeError) {
                 alert(`${i18n.t('toasts.recording.alertFailed')}\n\n${errorMsg}`);
               }
@@ -334,7 +329,7 @@ export function useRecordingStart(
         const generatedMeetingTitle = generateMeetingTitle();
 
         // Set STARTING status before initiating backend recording
-        setStatus(RecordingStatus.STARTING, 'Initializing recording...');
+        setStatus(RecordingStatus.STARTING);
 
         console.log('Starting backend recording with meeting:', generatedMeetingTitle);
         const result = await recordingService.startRecordingWithDevices(
@@ -361,9 +356,7 @@ export function useRecordingStart(
           setStatus(RecordingStatus.RECORDING);
         } else {
           const isRuntimeError = isTranscriptionRuntimeStartError(error);
-          setStatus(RecordingStatus.ERROR, isRuntimeError
-            ? TRANSCRIPTION_RUNTIME_USER_MESSAGE
-            : errorMsg);
+          setStatus(RecordingStatus.ERROR);
           if (!isRuntimeError) {
             alert(`${i18n.t('toasts.recording.alertFailed')}\n\n${errorMsg}`);
           }
