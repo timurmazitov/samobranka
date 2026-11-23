@@ -143,7 +143,8 @@ export const TRANSCRIPT_UPDATED_EVENT = 'transcript-updated';
 /**
  * The native event announcing that a pass ran and did not produce labels
  * (only `failed` fires it today). Its channel and payload form are not the
- * pass state's business; the store only ends a pass when it arrives.
+ * pass state's business; the store ends a pass when it arrives, and a
+ * `failed` payload keeps the pass visible as an honest error instead.
  */
 export const DIARIZATION_UNAVAILABLE_EVENT = 'diarization-unavailable';
 
@@ -192,13 +193,32 @@ export interface DiarizationProgressPayload {
   message?: string;
 }
 
+/**
+ * Whether the pass the store holds is still working or has died.
+ *
+ * `running` covers the announced stages; `failed` is the honest death of a
+ * pass: the `diarization-unavailable` terminal with status `failed` landed,
+ * so the indicator shows the reason and a retry instead of vanishing. The
+ * other terminals (success, name reset) and the configuration reasons
+ * (`no_model`, `no_runtime`, `deferred`) never produce `failed` — the pass
+ * simply ends, as before.
+ */
+export type DiarizationPassPhase = 'running' | 'failed';
+
 /** The shared pass state one meeting can be in, as the store keeps it. */
 export interface DiarizationPassState {
   meetingId: string;
-  stage: DiarizationStage;
+  /** The last stage announced by a running pass; `null` once it failed. */
+  stage: DiarizationStage | null;
   /** `null` means indeterminate: the stage owes no honest number. */
   progressPercentage: number | null;
   message: string | null;
+  phase: DiarizationPassPhase;
+  /**
+   * Why a `failed` pass failed: the native `reason` (or `message`) the
+   * terminal carried, shown verbatim next to the localized sentence.
+   */
+  error: string | null;
 }
 
 /** Whether a value is one of the native stages. Unknown stages are future
@@ -234,7 +254,8 @@ export function diarizationStageMessage(stage: DiarizationStage): string {
  * Pure and total: a payload without a meeting id cannot be attributed, and
  * an unknown stage cannot start or move a pass — both return `current`
  * unchanged. A percentage outside `0..100` is not trusted and reads as
- * indeterminate, never as a number on screen.
+ * indeterminate, never as a number on screen. A running pass replaces a
+ * failed one: this is the retry announcing its first stage.
  */
 export function applyDiarizationProgress(
   current: DiarizationPassState | null,
@@ -250,6 +271,43 @@ export function applyDiarizationProgress(
     stage: payload.stage,
     progressPercentage,
     message: typeof payload.message === 'string' ? payload.message : null,
+    phase: 'running',
+    error: null,
+  };
+}
+
+/**
+ * Folds the failed terminal of a pass into the meeting's pass state.
+ *
+ * The honest death of the indicator: instead of the pass vanishing, a
+ * `diarization-unavailable` with status `failed` turns it into an error the
+ * panel can explain and retry. Only `failed` does that — configuration
+ * statuses (absent model or runtime, deferred) are not pass failures, and a
+ * payload without an id cannot be attributed to any pass.
+ */
+export function applyDiarizationFailure(
+  current: DiarizationPassState | null,
+  payload: DiarizationUnavailablePayload,
+): DiarizationPassState | null {
+  if (!payload.meeting_id) return current;
+  if (payload.status !== 'failed') return current;
+  // Another meeting's failure never replaces this meeting's state; the store
+  // looks the current state up by the payload's id, so this is the reducer's
+  // own contract for direct callers.
+  if (current && current.meetingId !== payload.meeting_id) return current;
+  const reason =
+    typeof payload.reason === 'string' && payload.reason.trim()
+      ? payload.reason
+      : typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message
+        : null;
+  return {
+    meetingId: payload.meeting_id,
+    stage: null,
+    progressPercentage: null,
+    message: null,
+    phase: 'failed',
+    error: reason,
   };
 }
 
@@ -362,10 +420,26 @@ export class DiarizationPassStore {
     return this.terminals.has(meetingId);
   }
 
+  /** Records a terminal, bounded oldest-first (Sets keep insertion order):
+   * the record only has to outlive the small gap between a pass ending and a
+   * late watcher subscribing, never the whole session. */
+  private recordTerminal(meetingId: string): void {
+    this.terminals.delete(meetingId);
+    this.terminals.add(meetingId);
+    while (this.terminals.size > DiarizationPassStore.TERMINALS_LIMIT) {
+      const oldest = this.terminals.values().next().value;
+      if (oldest === undefined) break;
+      this.terminals.delete(oldest);
+    }
+  }
+
   /** Drops one meeting's pass state without waiting for a terminal event. */
   clear(meetingId: string): void {
-    const known = this.states.delete(meetingId) || this.terminals.delete(meetingId);
-    if (known) this.notify();
+    // Both deletions run unconditionally: `||` would skip the terminal record
+    // whenever a pass state existed.
+    const hadState = this.states.delete(meetingId);
+    const hadTerminal = this.terminals.delete(meetingId);
+    if (hadState || hadTerminal) this.notify();
   }
 
   /** Releases the bridge and every subscriber (tests, app shutdown). */
@@ -457,18 +531,145 @@ export class DiarizationPassStore {
     // watcher (an import dialog learning its id at the save) learns the pass
     // already ended; every subscriber is notified either way.
     if (!meetingId) return;
-    // Bound the record oldest-first (Sets keep insertion order): it only has
-    // to outlive the small gap between a pass ending and a late watcher
-    // subscribing, never the whole session.
-    this.terminals.delete(meetingId);
-    this.terminals.add(meetingId);
-    while (this.terminals.size > DiarizationPassStore.TERMINALS_LIMIT) {
-      const oldest = this.terminals.values().next().value;
-      if (oldest === undefined) break;
-      this.terminals.delete(oldest);
+    if (name === DIARIZATION_UNAVAILABLE_EVENT) {
+      // A `failed` terminal is the honest death of the pass: the reducer turns
+      // it into an error state the panel can explain and retry. Any other
+      // payload on this channel (the configuration statuses the contract says
+      // never arrive today) ends the pass like the other terminals.
+      const current = this.states.get(meetingId) ?? null;
+      const failed = applyDiarizationFailure(current, record as DiarizationUnavailablePayload);
+      if (failed && failed !== current) {
+        // The failed pass is over even though its error state stays visible:
+        // a late watcher (the import dialog) must still learn the terminal,
+        // or its bar would wait forever on a pass that died.
+        this.recordTerminal(meetingId);
+        this.states.set(meetingId, failed);
+        this.notify();
+        return;
+      }
     }
+    this.recordTerminal(meetingId);
     this.states.delete(meetingId);
     this.notify();
+  }
+}
+
+/**
+ * How long the live-stop flow waits for the first sign that a pass is really
+ * working before it concludes the pass never started and skips the stage.
+ *
+ * This is a hang guard, not the normal skip path: a configuration skip
+ * (`no_model`, `no_runtime`, `deferred`) answers through the pass promise
+ * itself, because native code returns immediately without running anything.
+ * The timer only covers a native side that hangs before deciding (a stalled
+ * database read or model discovery), where neither the promise resolves nor
+ * any progress event arrives. Five seconds is well past any honest cold
+ * decision (a database read plus a catalog scan and a runtime probe) while
+ * staying short enough that a hang never reads as a frozen stop flow.
+ */
+export const LIVE_DIARIZATION_FIRST_SIGNAL_MS = 5000;
+
+/**
+ * How long the live-stop flow waits once a pass has announced itself before
+ * it gives up and completes anyway. A pass that dies without ever emitting a
+ * terminal would otherwise hold the stop sequence open forever; ten minutes
+ * is far past any honest diarization of a meeting recording, so hitting it
+ * means the native task is hung and the stop must not wait for it.
+ */
+export const LIVE_DIARIZATION_STALLED_PASS_MS = 10 * 60_000;
+
+/**
+ * What the live-stop stage wait decided: the stage was shown because the
+ * pass actually ran, or it was skipped silently because it did not.
+ */
+export type LiveStopDiarizationOutcome = 'shown' | 'skipped';
+
+/**
+ * The slice of `DiarizationPassStore` the live-stop wait reads. Structural
+ * so a test can drive an injected store without the Tauri bridge.
+ */
+export interface LiveDiarizationStoreView {
+  subscribe: (onChange?: () => void) => () => void;
+  getState: (meetingId: string) => DiarizationPassState | null;
+}
+
+/**
+ * Starts the live pass and waits for its terminal so the stop sequence does
+ * not look finished while speakers are still being detected.
+ *
+ * The decision to show the stage is event-driven, exactly the way the shared
+ * pass state works everywhere else: the stage appears only once the store
+ * has seen a running pass for this meeting (`onPassStart` fires then), so a
+ * configuration skip stays silent. Three bounds keep the stop sequence from
+ * ever hanging on the pass:
+ *
+ * 1. the pass promise itself resolves — native code returns immediately for
+ *    `no_model` / `no_runtime` / `deferred`, and after the work for `ran`
+ *    and `failed`, so the skip and the normal completion need no timer;
+ * 2. the first-signal timeout, for a native side that hangs before deciding;
+ * 3. the stalled-pass timeout, for a pass that announces itself and then
+ *    dies without ever emitting a terminal.
+ *
+ * Never rejects: whatever the pass does, the stop sequence moves on.
+ */
+export async function waitForLiveDiarizationStage(
+  store: LiveDiarizationStoreView,
+  meetingId: string,
+  startPass: () => Promise<unknown>,
+  onPassStart?: () => void,
+  firstSignalMs: number = LIVE_DIARIZATION_FIRST_SIGNAL_MS,
+  stalledPassMs: number = LIVE_DIARIZATION_STALLED_PASS_MS,
+): Promise<LiveStopDiarizationOutcome> {
+  let unsubscribe: () => void = () => {};
+  try {
+    return await new Promise<LiveStopDiarizationOutcome>((resolve) => {
+      let settled = false;
+      let seenRunning = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (outcome: LiveStopDiarizationOutcome) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
+        resolve(outcome);
+      };
+      const check = () => {
+        const state = store.getState(meetingId);
+        const running = state !== null && state.phase === 'running';
+        if (running && !seenRunning) {
+          seenRunning = true;
+          // From here the bound is the stalled-pass timeout: a pass that
+          // announced itself may legitimately run for minutes, but a dead
+          // native task must not hold the stop sequence open forever.
+          if (timer !== undefined) clearTimeout(timer);
+          timer = setTimeout(() => finish('shown'), stalledPassMs);
+          onPassStart?.();
+        }
+        // The store drops a meeting's state on every terminal, so
+        // running-then-gone is the pass ending by event rather than by the
+        // command's return.
+        if (!running && seenRunning) finish('shown');
+      };
+      // Subscribe before dispatching, so the first stage cannot arrive
+      // before there is anybody listening.
+      unsubscribe = store.subscribe(check);
+      let pass: Promise<unknown>;
+      try {
+        pass = Promise.resolve(startPass());
+      } catch {
+        pass = Promise.resolve();
+      }
+      // The pass's own answer is the reliable skip signal: it resolves for
+      // every outcome, and an outcome that never ran a pass resolved without
+      // the store ever having seen one.
+      const onPassSettled = () => finish(seenRunning ? 'shown' : 'skipped');
+      pass.then(onPassSettled, onPassSettled);
+      // Neither the pass nor any stage announced itself: treat the pass as
+      // never started and let the stop flow finish.
+      timer = setTimeout(() => finish('skipped'), firstSignalMs);
+    });
+  } finally {
+    unsubscribe();
   }
 }
 

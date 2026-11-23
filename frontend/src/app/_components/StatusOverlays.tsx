@@ -4,6 +4,10 @@ interface StatusOverlaysProps {
   // Status flags
   isProcessing: boolean;      // Processing transcription after recording stops
   isSaving: boolean;          // Saving transcript to database
+  // Detecting speakers after the save (the live-stop diarization stage).
+  // Optional so existing call sites keep typechecking while they have no
+  // speaker stage to report.
+  isDetectingSpeakers?: boolean;
 
   // Layout
   sidebarCollapsed: boolean;  // For responsive margin calculation
@@ -42,6 +46,7 @@ function StatusOverlay({ show, message, sidebarCollapsed }: StatusOverlayProps) 
 export function StatusOverlays({
   isProcessing,
   isSaving,
+  isDetectingSpeakers,
   sidebarCollapsed
 }: StatusOverlaysProps) {
   const { t } = useTranslation();
@@ -59,6 +64,14 @@ export function StatusOverlays({
       <StatusOverlay
         show={isSaving}
         message={t('misc.statusOverlays.savingTranscript')}
+        sidebarCollapsed={sidebarCollapsed}
+      />
+
+      {/* Speaker stage - shown after the save while the live diarization pass
+          is running; skipped silently when no pass runs. */}
+      <StatusOverlay
+        show={isDetectingSpeakers === true}
+        message={t('misc.statusOverlays.detectingSpeakers')}
         sidebarCollapsed={sidebarCollapsed}
       />
     </>

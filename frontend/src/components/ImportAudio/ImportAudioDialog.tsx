@@ -277,8 +277,8 @@ export function ImportAudioDialog({
   // sentence, falling back to the diarization sentence before the pass speaks.
   const barStage = status === 'complete'
     ? t('importAudio.stages.complete')
-    : passState
-      ? diarizationStageMessage(passState.stage)
+    : passState && passState.phase === 'running'
+      ? diarizationStageMessage(passState.stage!)
       : isDiarizing
         ? t('importAudio.stages.diarizing')
         : progress?.stage ?? t('importAudio.stages.diarizing');
@@ -286,7 +286,9 @@ export function ImportAudioDialog({
     status === 'complete'
       ? t('importAudio.stages.complete')
       : progress?.message ??
-        (passState ? diarizationStageMessage(passState.stage) : t('importAudio.stages.diarizing'));
+        (passState && passState.phase === 'running'
+          ? diarizationStageMessage(passState.stage!)
+          : t('importAudio.stages.diarizing'));
   const showBar = !error && (inProgress || status === 'complete');
 
   return (

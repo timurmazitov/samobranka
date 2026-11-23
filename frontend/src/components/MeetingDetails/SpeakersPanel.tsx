@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, ChevronsUpDown, Loader2, Sparkles, Users } from 'lucide-react';
+import { AlertTriangle, Check, ChevronsUpDown, Loader2, RotateCw, Sparkles, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +22,8 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import {
+  DIARIZATION_NO_MODEL_MESSAGE,
+  DIARIZATION_NO_RUNTIME_MESSAGE,
   DIARIZATION_NO_SPEAKERS_FOUND_MESSAGE,
   DIARIZATION_UNAVAILABLE_HINT,
   diarizationStageMessage,
@@ -203,8 +205,14 @@ interface SpeakersPanelProps {
   onRefetchTranscripts?: () => Promise<void>;
   /** Diarization command seam; production uses the Tauri client. */
   diarizationClient?: DiarizationClient;
-  /** Model catalog seam: decides whether the manual run button is enabled. */
-  modelClient?: Pick<AudioCppModelClient, 'getAvailableModels'>;
+  /**
+   * Model catalog seam: decides whether the manual run button is enabled, and
+   * (when it offers `getDiagnostics`) whether the native runtime is usable.
+   * The runtime read is optional so injected doubles that only model the
+   * catalog keep typechecking; a missing probe leaves the runtime unknown.
+   */
+  modelClient?: Pick<AudioCppModelClient, 'getAvailableModels'> &
+    Partial<Pick<AudioCppModelClient, 'getDiagnostics'>>;
   /**
    * Shared diarization pass state seam. Production reads the singleton so an
    * automatic pass (import, retranscription, live stop) shows here even when
@@ -251,6 +259,14 @@ export function SpeakersPanel({
   const [hasDiarizationModel, setHasDiarizationModel] = useState<boolean | null>(false);
   const [isDiarizing, setIsDiarizing] = useState(false);
   const [diarizationReason, setDiarizationReason] = useState<string | null>(null);
+  /**
+   * Whether the native audio.cpp runtime is usable: `true` when the probe
+   * said the library loaded, `false` when it reported it missing, and `null`
+   * when the probe was not run or could not be read. Like the model catalog,
+   * an unknown runtime is not knowledge of a missing one, so it never
+   * disables anything; it just stays silent.
+   */
+  const [hasRuntime, setHasRuntime] = useState<boolean | null>(null);
   // Guards against a second click landing before the disabled state renders.
   const diarizingRef = useRef(false);
 
@@ -269,6 +285,13 @@ export function SpeakersPanel({
     [passStore, meetingId],
   );
   const passState = useSyncExternalStore(subscribePass, readPass, () => null);
+
+  /**
+   * Whether the shared state says a pass is working for this meeting right
+   * now. A `failed` phase is not running: it is the honest death of a pass,
+   * and the panel must be able to start the same pass again from it.
+   */
+  const passRunning = passState !== null && passState.phase === 'running';
 
   const loadSpeakers = useCallback(async () => {
     if (!meetingId) return;
@@ -350,6 +373,32 @@ export function SpeakersPanel({
     };
   }, [open, modelClient]);
 
+  // Whether the audio.cpp runtime itself can run a pass at all: the same
+  // probe the settings section reports, so a machine without the native
+  // library reads a concrete explanation instead of a silent, eternally
+  // missing indicator (story 13). Like the catalog, an unreadable probe
+  // stays `null` and blocks nothing — the pass then reports the real status.
+  useEffect(() => {
+    const probe = modelClient.getDiagnostics;
+    if (!open || !probe) return;
+
+    let cancelled = false;
+    const loadDiagnostics = async () => {
+      try {
+        const diagnostics = await probe.call(modelClient);
+        if (!cancelled) setHasRuntime(diagnostics.available === true);
+      } catch (error) {
+        console.warn('Failed to read the audio.cpp diagnostics:', error);
+        if (!cancelled) setHasRuntime(null);
+      }
+    };
+
+    void loadDiagnostics();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, modelClient]);
+
   /**
    * Runs one diarization pass for this meeting and reports the outcome inside
    * the panel: the user pressed a button, so every refusal is shown, unlike the
@@ -358,15 +407,18 @@ export function SpeakersPanel({
   const handleDiarize = async () => {
     // A ref guards against a second click landing before the disabled state
     // renders: two concurrent passes are exactly what native code serializes,
-    // and the panel must not queue them either.
+    // and the panel must not queue them either. The shared state is re-read
+    // here rather than trusted from the render snapshot, and only a *running*
+    // pass blocks: a failed one is exactly what the retry restarts.
     if (
       !meetingId ||
       isDiarizing ||
       hasDiarizationModel === false ||
+      hasRuntime === false ||
       diarizingRef.current ||
       // A pass is already running for this meeting — started automatically
       // or from elsewhere; the panel must not queue a second one.
-      passState !== null
+      passStore.getState(meetingId)?.phase === 'running'
     ) {
       return;
     }
@@ -375,6 +427,11 @@ export function SpeakersPanel({
     setIsDiarizing(true);
     setDiarizationReason(null);
     setPanelError(null);
+    // Whether the shared pass state may be cleared when this attempt ends.
+    // A `failed` result leaves it to the failed terminal: native code emits
+    // `diarization-unavailable` for exactly this pass, and its error block
+    // owns the wording and the retry button.
+    let ownsFailure = false;
     try {
       let result;
       try {
@@ -402,14 +459,18 @@ export function SpeakersPanel({
       // generic message so a support report can quote something concrete.
       const detail = result.status === 'failed' ? result.error : null;
       setDiarizationReason(detail ? `${reason} (${detail})` : reason);
+      ownsFailure = result.status === 'failed';
     } finally {
       diarizingRef.current = false;
       setIsDiarizing(false);
       // The command resolved; whatever stages the pass announced are over
       // now. Clearing the shared state keeps the indicator honest even if a
       // terminal event raced past this listener, so a finished manual run
-      // cannot leave a stale stage on screen.
-      if (meetingId) passStore.clear(meetingId);
+      // cannot leave a stale stage on screen — except after a failed result,
+      // where the failed terminal owns the state and the retry button lives.
+      if (meetingId && !(ownsFailure && passStore.getState(meetingId)?.phase === 'failed')) {
+        passStore.clear(meetingId);
+      }
     }
   };
 
@@ -557,7 +618,7 @@ export function SpeakersPanel({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto">
-          {passState && (
+          {passState && passState.phase === 'running' && passState.stage && (
             <div
               data-testid="diarization-pass-indicator"
               className="flex items-center justify-center gap-2 py-3 text-sm text-muted-foreground"
@@ -571,6 +632,29 @@ export function SpeakersPanel({
               </span>
             </div>
           )}
+          {passState && passState.phase === 'failed' && (
+            <div
+              data-testid="diarization-pass-error"
+              className="flex flex-col items-center justify-center gap-2 py-3 text-center text-sm text-red-600"
+            >
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {passState.error
+                  ? t('speakers.passFailed', { reason: passState.error })
+                  : t('speakers.passFailedNoReason')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="diarization-retry-button"
+                onClick={handleDiarize}
+                disabled={isDiarizing || hasDiarizationModel === false || hasRuntime === false}
+              >
+                <RotateCw className="mr-2 h-4 w-4" />
+                {t('speakers.retry')}
+              </Button>
+            </div>
+          )}
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -580,17 +664,36 @@ export function SpeakersPanel({
             <div className="py-6 text-center text-sm text-red-600">{loadError}</div>
           ) : speakers.length === 0 ? (
             <div className="space-y-3 py-6 text-center">
-              <p className="text-sm text-muted-foreground">{DIARIZATION_UNAVAILABLE_HINT}</p>
+              {/* Availability speaks before the button does: an absent model
+                  or runtime explains itself, so the missing indicator never
+                  reads as a bug (stories 12, 13). Only the first concrete
+                  refusal is stated; an unknown catalog or runtime stays
+                  silent and lets the run report the real status. */}
+              {hasDiarizationModel === false ? (
+                <p data-testid="diarization-model-hint" className="text-sm text-muted-foreground">
+                  {DIARIZATION_NO_MODEL_MESSAGE}
+                </p>
+              ) : hasRuntime === false ? (
+                <p data-testid="diarization-runtime-hint" className="text-sm text-muted-foreground">
+                  {DIARIZATION_NO_RUNTIME_MESSAGE}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">{DIARIZATION_UNAVAILABLE_HINT}</p>
+              )}
               <div className="flex justify-center">
                 <Button
                   size="sm"
                   data-testid="diarize-meeting-button"
                   onClick={handleDiarize}
-                  disabled={isDiarizing || hasDiarizationModel === false || passState !== null}
+                  disabled={
+                    isDiarizing || hasDiarizationModel === false || hasRuntime === false || passRunning
+                  }
                   title={
                     hasDiarizationModel === false
-                      ? DIARIZATION_UNAVAILABLE_HINT
-                      : t('speakers.runTooltip')
+                      ? DIARIZATION_NO_MODEL_MESSAGE
+                      : hasRuntime === false
+                        ? DIARIZATION_NO_RUNTIME_MESSAGE
+                        : t('speakers.runTooltip')
                   }
                 >
                   {isDiarizing ? (

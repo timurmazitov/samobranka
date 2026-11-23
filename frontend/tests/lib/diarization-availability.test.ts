@@ -133,6 +133,8 @@ describe('importBarPercentage', () => {
       stage: 'inferring',
       progressPercentage: null,
       message: null,
+      phase: 'running',
+      error: null,
       ...overrides,
     };
   }
