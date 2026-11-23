@@ -312,4 +312,59 @@ describe('DiarizationPassStore', () => {
       'applying_labels',
     ]);
   });
+
+  test('a terminal is recorded even when the watcher subscribed too late', async () => {
+    // The import dialog learns its meeting id only when the transcript is
+    // saved; if the fast pass's terminal already fired, the store must still
+    // be able to answer "this meeting's pass is over", or the bar would hang
+    // waiting for a completion that already happened.
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    store.subscribe();
+    await store.settled();
+
+    expect(store.hasSeenTerminal('meeting-a')).toBe(false);
+    emit(bridge, 'transcript-updated', { meeting_id: 'meeting-a' });
+    expect(store.hasSeenTerminal('meeting-a')).toBe(true);
+
+    // A fresh subscriber sees the finished record too.
+    const late = new DiarizationPassStore(bridge.listen as never);
+    late.subscribe();
+    await late.settled();
+    emit(bridge, 'speaker-names-reset', { meeting_id: 'meeting-b' });
+    expect(late.hasSeenTerminal('meeting-b')).toBe(true);
+    store.dispose();
+    late.dispose();
+  });
+
+  test('a new pass supersedes the terminal recorded for an earlier one', async () => {
+    // A meeting can be diarized again (manual re-run, retranscription): the
+    // fresh pass is not finished just because an earlier pass ended.
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    store.subscribe();
+    await store.settled();
+
+    emit(bridge, 'transcript-updated', { meeting_id: 'meeting-a' });
+    expect(store.hasSeenTerminal('meeting-a')).toBe(true);
+
+    emit(bridge, 'diarization-progress', progress({ stage: 'queued' }));
+    expect(store.hasSeenTerminal('meeting-a')).toBe(false);
+    expect(store.getState('meeting-a')?.stage).toBe('queued');
+    store.dispose();
+  });
+
+  test('clear forgets the finished record so a rescheduled pass is not pre-ended', async () => {
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    store.subscribe();
+    await store.settled();
+
+    emit(bridge, 'diarization-unavailable', { meeting_id: 'meeting-a', status: 'failed' });
+    expect(store.hasSeenTerminal('meeting-a')).toBe(true);
+
+    store.clear('meeting-a');
+    expect(store.hasSeenTerminal('meeting-a')).toBe(false);
+    store.dispose();
+  });
 });

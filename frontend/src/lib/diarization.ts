@@ -294,6 +294,18 @@ const PASS_TERMINAL_EVENTS = [
 export class DiarizationPassStore {
   private readonly listenImpl: DiarizationPassListen;
   private readonly states = new Map<string, DiarizationPassState>();
+  /**
+   * Terminals already seen per meeting, kept after the pass state is dropped.
+   * A surface that started watching mid-pass (an import dialog learning its
+   * meeting id only when the transcript is saved) cannot tell "the terminal
+   * already fired" from "no pass was ever scheduled" without this record;
+   * without it its bar would wait for a completion that already happened.
+   * Bounded oldest-first: it only has to cover the short window between a
+   * pass starting and a surface subscribing to it, and imports/retranscriptions
+   * are serialized, so a few dozen recent meetings is ample.
+   */
+  private readonly terminals = new Set<string>();
+  private static readonly TERMINALS_LIMIT = 64;
   private readonly subscribers = new Set<() => void>();
   private teardown: (() => void) | null = null;
   private listening = false;
@@ -340,14 +352,26 @@ export class DiarizationPassStore {
     };
   }
 
+  /** Whether a terminal event has already been seen for the meeting, even
+   * after the pass state was dropped. A surface that starts watching a pass
+   * mid-way (the import dialog learns the meeting id only when the transcript
+   * is saved) cannot otherwise tell "the terminal already fired" from "no
+   * pass was ever scheduled", and would wait for a completion that already
+   * happened. */
+  hasSeenTerminal(meetingId: string): boolean {
+    return this.terminals.has(meetingId);
+  }
+
   /** Drops one meeting's pass state without waiting for a terminal event. */
   clear(meetingId: string): void {
-    if (this.states.delete(meetingId)) this.notify();
+    const known = this.states.delete(meetingId) || this.terminals.delete(meetingId);
+    if (known) this.notify();
   }
 
   /** Releases the bridge and every subscriber (tests, app shutdown). */
   dispose(): void {
     this.subscribers.clear();
+    this.terminals.clear();
     this.stop();
   }
 
@@ -419,15 +443,32 @@ export class DiarizationPassStore {
       const current = meetingId ? this.states.get(meetingId) ?? null : null;
       const next = applyDiarizationProgress(current, record as DiarizationProgressPayload);
       if (!next || !meetingId || next === current) return;
+      // A running pass supersedes any terminal recorded earlier (a retranscription
+      // of a meeting that was already diarized must not look finished).
+      this.terminals.delete(meetingId);
       this.states.set(meetingId, next);
       this.notify();
       return;
     }
     // Terminal: the pass is over, whatever the terminal says next is its own
     // business. An unattributable terminal names no pass and hangs none — the
-    // manual run's completion clears its own state regardless.
+    // manual run's completion clears its own state regardless. The meeting is
+    // recorded as finished even when no pass state existed for it, so a late
+    // watcher (an import dialog learning its id at the save) learns the pass
+    // already ended; every subscriber is notified either way.
     if (!meetingId) return;
-    if (this.states.delete(meetingId)) this.notify();
+    // Bound the record oldest-first (Sets keep insertion order): it only has
+    // to outlive the small gap between a pass ending and a late watcher
+    // subscribing, never the whole session.
+    this.terminals.delete(meetingId);
+    this.terminals.add(meetingId);
+    while (this.terminals.size > DiarizationPassStore.TERMINALS_LIMIT) {
+      const oldest = this.terminals.values().next().value;
+      if (oldest === undefined) break;
+      this.terminals.delete(oldest);
+    }
+    this.states.delete(meetingId);
+    this.notify();
   }
 }
 

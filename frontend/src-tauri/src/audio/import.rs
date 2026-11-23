@@ -575,7 +575,10 @@ async fn run_import<R: Runtime>(
             return Err(anyhow!("Import cancelled"));
         }
 
-        let progress = 30 + ((i as f32 / processable_count.max(1) as f32) * 50.0) as u32;
+        // Transcription owns 30..70 (the old 30..80 was compressed to make
+        // room for the save 70..75 and diarization 75..100 stages), so the
+        // bar no longer finishes at transcription.
+        let progress = transcription_progress(i, processable_count);
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
             &app,
@@ -670,7 +673,9 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "saving", 85, "Creating meeting...");
+    // Saving owns 70..75: the last five points before the band the frontend
+    // holds for diarization (75..100, fed by the shared pass state).
+    emit_progress(&app, "saving", SAVING_PROGRESS, "Creating meeting...");
 
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
@@ -703,7 +708,7 @@ async fn run_import<R: Runtime>(
     }
 
     // Write transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, "saving", 90, "Writing transcript files...");
+    emit_progress(&app, "saving", DIARIZATION_BAND_START, "Writing transcript files...");
 
     if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -720,7 +725,11 @@ async fn run_import<R: Runtime>(
         warn!("Failed to write metadata.json: {}", e);
     }
 
-    emit_progress(&app, "complete", 100, "Import complete");
+    // The bar does not finish here: the last native milestone is 75, the
+    // top of the save band. The 75..100 band belongs to the diarization pass
+    // and is fed by the frontend's shared pass state (one number), so a
+    // native "100" here would make the bar lie about the work still running.
+    emit_progress(&app, "complete", DIARIZATION_BAND_START, "Import complete");
 
     // Diarization is a second stage over the saved meeting: the transcript is
     // already committed and the import is already complete for the user. There
@@ -735,6 +744,25 @@ async fn run_import<R: Runtime>(
         segments_count: segments.len(),
         duration_seconds,
     })
+}
+
+/// The import bar's scale, in one place so the milestones cannot drift:
+/// transcription owns 30..70, saving owns 70..75, and the top band
+/// 75..100 belongs to the diarization pass — fed by the frontend's shared
+/// pass state as one number, which is why no native milestone may reach
+/// past [`DIARIZATION_BAND_START`].
+const TRANSCRIPTION_BAND: (u32, u32) = (30, 70);
+const SAVING_PROGRESS: u32 = 70;
+const DIARIZATION_BAND_START: u32 = 75;
+
+/// The bar percentage for transcribing segment `index` of `count`. The band
+/// is [TRANSCRIPTION_BAND]; the last segment stays one point below the top
+/// so "saving" is visibly a new milestone.
+fn transcription_progress(index: usize, count: usize) -> u32 {
+    let (start, end) = TRANSCRIPTION_BAND;
+    let span = end - start;
+    let fraction = (index as f32 / count.max(1) as f32).min(1.0);
+    start + (fraction * (span - 1) as f32) as u32
 }
 
 /// Emit progress event
@@ -994,6 +1022,32 @@ mod tests {
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].audio_start_time, Some(0.0));
         assert_eq!(segments[0].audio_end_time, Some(1.5));
+    }
+
+    /// The bar's scale is a contract with the import dialog: transcription
+    /// must stay inside 30..70 (the old 30..80 read as "finished" while the
+    /// bar still owed save and diarization), saving sits at 70..75, and the
+    /// last native milestone never crosses into the diarization band.
+    #[test]
+    fn the_progress_scale_leaves_the_diarization_band_to_the_pass_state() {
+        // The first segment starts the band, the last stays under its top.
+        assert_eq!(transcription_progress(0, 10), 30);
+        assert_eq!(transcription_progress(1, 10), 33);
+        assert_eq!(transcription_progress(9, 10), 65);
+        assert!(transcription_progress(10, 10) < TRANSCRIPTION_BAND.1);
+        // A single segment still reads as started, not finished.
+        assert_eq!(transcription_progress(0, 1), 30);
+        assert_eq!(transcription_progress(0, 0), 30);
+        // The whole band sweeps inside 30..70 and never touches save or
+        // diarization.
+        for count in 1..=50 {
+            for index in 0..=count {
+                let value = transcription_progress(index, count);
+                assert!((30..TRANSCRIPTION_BAND.1).contains(&value), "{index}/{count} -> {value}");
+            }
+        }
+        assert_eq!(SAVING_PROGRESS, 70);
+        assert_eq!(DIARIZATION_BAND_START, 75);
     }
 
     #[test]

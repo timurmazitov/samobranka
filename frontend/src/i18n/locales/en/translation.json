@@ -328,8 +328,14 @@
     },
     "actions": {
       "import": "Import",
-      "retry": "Try Again"
+      "retry": "Try Again",
+      "done": "Done"
     },
+    "stages": {
+      "diarizing": "Diarizing…",
+      "complete": "Import complete"
+    },
+    "diarizationHint": "You can close this dialog — speaker detection continues and shows in the meeting's speakers panel.",
     "toast": {
       "complete_one": "Import complete! {{count}} segment created.",
       "complete_other": "Import complete! {{count}} segments created.",
