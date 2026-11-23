@@ -143,7 +143,8 @@ export const TRANSCRIPT_UPDATED_EVENT = 'transcript-updated';
 /**
  * The native event announcing that a pass ran and did not produce labels
  * (only `failed` fires it today). Its channel and payload form are not the
- * pass state's business; the store only ends a pass when it arrives.
+ * pass state's business; the store ends a pass when it arrives, and a
+ * `failed` payload keeps the pass visible as an honest error instead.
  */
 export const DIARIZATION_UNAVAILABLE_EVENT = 'diarization-unavailable';
 
@@ -192,13 +193,32 @@ export interface DiarizationProgressPayload {
   message?: string;
 }
 
+/**
+ * Whether the pass the store holds is still working or has died.
+ *
+ * `running` covers the announced stages; `failed` is the honest death of a
+ * pass: the `diarization-unavailable` terminal with status `failed` landed,
+ * so the indicator shows the reason and a retry instead of vanishing. The
+ * other terminals (success, name reset) and the configuration reasons
+ * (`no_model`, `no_runtime`, `deferred`) never produce `failed` — the pass
+ * simply ends, as before.
+ */
+export type DiarizationPassPhase = 'running' | 'failed';
+
 /** The shared pass state one meeting can be in, as the store keeps it. */
 export interface DiarizationPassState {
   meetingId: string;
-  stage: DiarizationStage;
+  /** The last stage announced by a running pass; `null` once it failed. */
+  stage: DiarizationStage | null;
   /** `null` means indeterminate: the stage owes no honest number. */
   progressPercentage: number | null;
   message: string | null;
+  phase: DiarizationPassPhase;
+  /**
+   * Why a `failed` pass failed: the native `reason` (or `message`) the
+   * terminal carried, shown verbatim next to the localized sentence.
+   */
+  error: string | null;
 }
 
 /** Whether a value is one of the native stages. Unknown stages are future
@@ -234,7 +254,8 @@ export function diarizationStageMessage(stage: DiarizationStage): string {
  * Pure and total: a payload without a meeting id cannot be attributed, and
  * an unknown stage cannot start or move a pass — both return `current`
  * unchanged. A percentage outside `0..100` is not trusted and reads as
- * indeterminate, never as a number on screen.
+ * indeterminate, never as a number on screen. A running pass replaces a
+ * failed one: this is the retry announcing its first stage.
  */
 export function applyDiarizationProgress(
   current: DiarizationPassState | null,
@@ -250,6 +271,43 @@ export function applyDiarizationProgress(
     stage: payload.stage,
     progressPercentage,
     message: typeof payload.message === 'string' ? payload.message : null,
+    phase: 'running',
+    error: null,
+  };
+}
+
+/**
+ * Folds the failed terminal of a pass into the meeting's pass state.
+ *
+ * The honest death of the indicator: instead of the pass vanishing, a
+ * `diarization-unavailable` with status `failed` turns it into an error the
+ * panel can explain and retry. Only `failed` does that — configuration
+ * statuses (absent model or runtime, deferred) are not pass failures, and a
+ * payload without an id cannot be attributed to any pass.
+ */
+export function applyDiarizationFailure(
+  current: DiarizationPassState | null,
+  payload: DiarizationUnavailablePayload,
+): DiarizationPassState | null {
+  if (!payload.meeting_id) return current;
+  if (payload.status !== 'failed') return current;
+  // Another meeting's failure never replaces this meeting's state; the store
+  // looks the current state up by the payload's id, so this is the reducer's
+  // own contract for direct callers.
+  if (current && current.meetingId !== payload.meeting_id) return current;
+  const reason =
+    typeof payload.reason === 'string' && payload.reason.trim()
+      ? payload.reason
+      : typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message
+        : null;
+  return {
+    meetingId: payload.meeting_id,
+    stage: null,
+    progressPercentage: null,
+    message: null,
+    phase: 'failed',
+    error: reason,
   };
 }
 
@@ -427,6 +485,19 @@ export class DiarizationPassStore {
     // business. An unattributable terminal names no pass and hangs none — the
     // manual run's completion clears its own state regardless.
     if (!meetingId) return;
+    if (name === DIARIZATION_UNAVAILABLE_EVENT) {
+      // A `failed` terminal is the honest death of the pass: the reducer turns
+      // it into an error state the panel can explain and retry. Any other
+      // payload on this channel (the configuration statuses the contract says
+      // never arrive today) ends the pass like the other terminals.
+      const current = this.states.get(meetingId) ?? null;
+      const failed = applyDiarizationFailure(current, record as DiarizationUnavailablePayload);
+      if (failed && failed !== current) {
+        this.states.set(meetingId, failed);
+        this.notify();
+        return;
+      }
+    }
     if (this.states.delete(meetingId)) this.notify();
   }
 }

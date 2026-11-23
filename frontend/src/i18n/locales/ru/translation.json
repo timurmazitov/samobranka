@@ -938,6 +938,9 @@
       "applying_labels": "Обновляем спикеров…"
     },
     "catalogWarning": "Не удалось прочитать список моделей диаризации. Запуск покажет реальное состояние.",
+    "passFailed": "Диаризация не удалась: {{reason}}",
+    "passFailedNoReason": "Диаризация не удалась",
+    "retry": "Повторить",
     "segmentCount_one": "{{count}} сегмент",
     "segmentCount_few": "{{count}} сегмента",
     "segmentCount_many": "{{count}} сегментов",

@@ -921,6 +921,9 @@
       "applying_labels": "Updating speakers…"
     },
     "catalogWarning": "Could not read the diarization model list. A run will report the real status.",
+    "passFailed": "Diarization failed: {{reason}}",
+    "passFailedNoReason": "Diarization failed",
+    "retry": "Retry",
     "segmentCount_one": "{{count}} segment",
     "segmentCount_other": "{{count}} segments",
     "done": "Done"

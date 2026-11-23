@@ -14,6 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   DIARIZATION_STAGES,
   DiarizationPassStore,
+  applyDiarizationFailure,
   applyDiarizationProgress,
   type DiarizationPassState,
   type DiarizationProgressPayload,
@@ -39,6 +40,8 @@ describe('applyDiarizationProgress (pure reducer)', () => {
       stage: 'queued',
       progressPercentage: null,
       message: 'Analyzing the audio...',
+      phase: 'running',
+      error: null,
     } satisfies DiarizationPassState);
   });
 
@@ -105,6 +108,74 @@ describe('applyDiarizationProgress (pure reducer)', () => {
 
     expect(applyDiarizationProgress(null, orphan)).toBeNull();
     expect(applyDiarizationProgress(current, orphan)).toBe(current);
+  });
+});
+
+describe('applyDiarizationFailure (pure reducer)', () => {
+  function failure(overrides: Record<string, unknown> = {}) {
+    return {
+      meeting_id: 'meeting-a',
+      status: 'failed',
+      ...overrides,
+    } as Parameters<typeof applyDiarizationFailure>[1];
+  }
+
+  test('a failed terminal turns a running pass into an honest error', () => {
+    const running = applyDiarizationProgress(null, progress({ stage: 'inferring' }));
+    const next = applyDiarizationFailure(running, failure({ reason: 'engine exploded' }));
+
+    expect(next).toEqual({
+      meetingId: 'meeting-a',
+      stage: null,
+      progressPercentage: null,
+      message: null,
+      phase: 'failed',
+      error: 'engine exploded',
+    } satisfies DiarizationPassState);
+  });
+
+  test('a failure carries the native message when there is no reason', () => {
+    const next = applyDiarizationFailure(
+      applyDiarizationProgress(null, progress({ stage: 'decoding' })),
+      failure({ message: 'Speaker labels were skipped because diarization failed.' }),
+    );
+
+    expect(next?.error).toBe('Speaker labels were skipped because diarization failed.');
+  });
+
+  test('a failure with neither reason nor message keeps the pass failed but reasonless', () => {
+    const next = applyDiarizationFailure(
+      applyDiarizationProgress(null, progress({ stage: 'decoding' })),
+      failure(),
+    );
+
+    expect(next?.phase).toBe('failed');
+    expect(next?.error).toBeNull();
+  });
+
+  test('a failed terminal can arrive with no prior stage and still show', () => {
+    // The manual run's own command result can report a failure before any
+    // progress stage was announced; the indicator must still appear.
+    const next = applyDiarizationFailure(null, failure({ reason: 'boom' }));
+
+    expect(next).toMatchObject({ meetingId: 'meeting-a', phase: 'failed', error: 'boom' });
+  });
+
+  test('a configuration reason is not a pass failure and changes nothing', () => {
+    const running = applyDiarizationProgress(null, progress({ stage: 'decoding' }));
+    for (const status of ['no_model', 'no_runtime', 'deferred', 'ran']) {
+      expect(applyDiarizationFailure(running, failure({ status }))).toBe(running);
+    }
+  });
+
+  test('a failure for another meeting never touches this pass', () => {
+    const running = applyDiarizationProgress(null, progress({ stage: 'decoding' }));
+    expect(applyDiarizationFailure(running, failure({ meeting_id: 'meeting-b' }))).toBe(running);
+  });
+
+  test('an id-less failure cannot be attributed', () => {
+    const running = applyDiarizationProgress(null, progress({ stage: 'decoding' }));
+    expect(applyDiarizationFailure(running, { status: 'failed' } as never)).toBe(running);
   });
 });
 
@@ -191,6 +262,92 @@ describe('DiarizationPassStore', () => {
       expect(store.getState('meeting-a')).toBeNull();
       store.dispose();
     }
+  });
+
+  test('a failed terminal keeps the pass visible as an honest error', async () => {
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    const seen: Array<string | null> = [];
+    store.subscribe(() => seen.push(store.getState('meeting-a')?.phase ?? null));
+    await store.settled();
+
+    emit(bridge, 'diarization-progress', progress({ stage: 'inferring' }));
+    emit(bridge, 'diarization-unavailable', {
+      meeting_id: 'meeting-a',
+      status: 'failed',
+      reason: 'engine exploded',
+      message: 'Speaker labels were skipped because diarization failed.',
+    });
+
+    expect(store.getState('meeting-a')).toEqual({
+      meetingId: 'meeting-a',
+      stage: null,
+      progressPercentage: null,
+      message: null,
+      phase: 'failed',
+      error: 'engine exploded',
+    });
+    expect(seen).toEqual(['running', 'failed']);
+    store.dispose();
+  });
+
+  test('the first stage of a retry replaces the failed state', async () => {
+    // The panel's "Retry" fires the same command again; when native code
+    // announces its first stage, the error indicator gives way to the
+    // spinner without the panel having to clear anything itself.
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    store.subscribe();
+    await store.settled();
+
+    emit(bridge, 'diarization-unavailable', { meeting_id: 'meeting-a', status: 'failed' });
+    expect(store.getState('meeting-a')?.phase).toBe('failed');
+
+    emit(bridge, 'diarization-progress', progress({ stage: 'queued' }));
+    expect(store.getState('meeting-a')).toMatchObject({
+      phase: 'running',
+      stage: 'queued',
+      error: null,
+    });
+    store.dispose();
+  });
+
+  test('an unavailable terminal without a failed status ends the pass like the others', async () => {
+    // The native contract only sends `failed` here today; a payload with a
+    // configuration status (or none) must not strand the indicator in a
+    // half-state — the pass is over, the panel is empty again.
+    for (const payload of [
+      { meeting_id: 'meeting-a', status: 'deferred' },
+      { meeting_id: 'meeting-a' },
+    ]) {
+      const bridge = harness();
+      const store = new DiarizationPassStore(bridge.listen as never);
+      store.subscribe();
+      await store.settled();
+
+      emit(bridge, 'diarization-progress', progress({ stage: 'inferring' }));
+      emit(bridge, 'diarization-unavailable', payload);
+
+      expect(store.getState('meeting-a')).toBeNull();
+      store.dispose();
+    }
+  });
+
+  test('a failed terminal for another meeting keeps this pass running', async () => {
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    store.subscribe();
+    await store.settled();
+
+    emit(bridge, 'diarization-progress', progress({ stage: 'decoding' }));
+    emit(bridge, 'diarization-unavailable', {
+      meeting_id: 'meeting-b',
+      status: 'failed',
+      reason: 'engine exploded',
+    });
+
+    expect(store.getState('meeting-a')?.phase).toBe('running');
+    store.dispose();
   });
 
   test('a terminal for another meeting keeps this pass visible', async () => {
