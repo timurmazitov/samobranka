@@ -287,7 +287,9 @@ export function ImportAudioDialog({
           : t('importAudio.stages.diarizing');
   // The coded message resolves through `importAudio.progress.<code>`; the
   // English `message` prose is the fallback for an unknown or absent code
-  // (native-i18n spec D7), never a blank line.
+  // (native-i18n spec D7), never a blank line. The resolved sentence renders
+  // only under the progress bar (`barMessage` below): showing it in the
+  // description too duplicated the same status line in the dialog.
   const nativeMessage = importProgressText(progress);
   const barMessage =
     status === 'complete'
@@ -332,7 +334,7 @@ export function ImportAudioDialog({
           </DialogTitle>
           <DialogDescription>
             {inProgress
-              ? nativeMessage || progress?.message || t('importAudio.description.processing')
+              ? t('importAudio.description.processing')
               : error
               ? t('importAudio.description.error')
               : t('importAudio.description.idle')}
