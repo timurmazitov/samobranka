@@ -5,6 +5,7 @@ import { recordingService } from '@/services/recordingService';
 import { toast } from 'sonner';
 import { listen } from '@tauri-apps/api/event';
 import { resolveDeviceLabel } from '@/lib/audioDevices';
+import i18n from '@/i18n';
 
 /**
  * Recording state synchronized with backend
@@ -37,12 +38,11 @@ interface RecordingState {
 
   // NEW: Lifecycle status
   status: RecordingStatus;
-  statusMessage?: string;  // Optional message for current status
 }
 
 interface RecordingStateContextType extends RecordingState {
   // NEW: Setters for status management
-  setStatus: (status: RecordingStatus, message?: string) => void;
+  setStatus: (status: RecordingStatus) => void;
 
   // Computed helpers (derived from status)
   isStopping: boolean;
@@ -69,19 +69,17 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     recordingDuration: null,
     activeDuration: null,
     status: RecordingStatus.IDLE,  // NEW: Initialize with IDLE status
-    statusMessage: undefined,       // NEW: No message initially
   });
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // NEW: Status setter with logging
-  const setStatus = useCallback((status: RecordingStatus, message?: string) => {
-    console.log(`[RecordingState] Status: ${state.status} → ${status}`, message || '');
+  const setStatus = useCallback((status: RecordingStatus) => {
+    console.log(`[RecordingState] Status: ${state.status} → ${status}`);
 
     setState(prev => ({
       ...prev,
       status,
-      statusMessage: message,
     }));
   }, [state.status, state.isRecording, state.isPaused]);
 
@@ -160,7 +158,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           console.log('[RecordingStateContext] Recording starting event');
           setState(prev => prev.status === RecordingStatus.RECORDING
             ? prev
-            : { ...prev, status: RecordingStatus.STARTING, statusMessage: 'Starting recording...' });
+            : { ...prev, status: RecordingStatus.STARTING });
         });
         unsubscribers.push(unlistenStarting);
 
@@ -168,7 +166,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           if (payload.stage !== 'stopping_audio') return;
           setState(prev => (prev.status === RecordingStatus.RECORDING ||
             (prev.status === RecordingStatus.IDLE && prev.isRecording))
-            ? { ...prev, status: RecordingStatus.STOPPING, statusMessage: 'Stopping recording...' }
+            ? { ...prev, status: RecordingStatus.STOPPING }
             : prev);
         });
         unsubscribers.push(unlistenShutdown);
@@ -193,7 +191,6 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             return {
               ...prev,
               status: newStatus,
-              statusMessage: newStatus === RecordingStatus.STOPPING ? 'Stopping recording...' : prev.statusMessage,
               isRecording: false,
               isPaused: false,
               isActive: false,
@@ -292,7 +289,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // selected mic that wasn't available at start (backend fell back to
           // the default). Copy is worded to be accurate for both.
           toast.info(
-            `Microphone switched to ${label} for this meeting.`,
+            i18n.t('recording.micSwitched', { label }),
             { duration: 6000 }
           );
         });
@@ -307,7 +304,9 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // available" — expected, not an error worth a toast.
           if (isRecordingRef.current) {
             toast.error(
-              `Microphone fallback failed for ${label}: ${error}`,
+              // `error` is a Rust-side string; per the native-i18n spec (D7)
+              // the technical tail stays raw behind the translated prefix.
+              i18n.t('recording.micFallbackFailed', { label, error }),
               { duration: 8000 }
             );
           }
@@ -320,7 +319,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // Fires at recording start, before isRecording flips true, so this
           // is intentionally NOT gated by isRecordingRef.
           toast.error(
-            'No microphone available — recording system audio only.',
+            i18n.t('recording.micUnavailable'),
             { duration: 8000 }
           );
         });
@@ -334,7 +333,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // mic-swap-failed so a stale event after Stop doesn't alarm the user.
           if (isRecordingRef.current) {
             toast.error(
-              `Microphone '${label}' could not be recovered — recording continues without a microphone. Stop and restart to fix.`,
+              i18n.t('recording.micRecoveryExhausted', { label }),
               { duration: 10000 }
             );
           }

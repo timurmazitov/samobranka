@@ -102,13 +102,6 @@ pub struct ImportError {
     pub error: String,
 }
 
-/// Warning emitted during import (non-fatal)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImportWarning {
-    pub warning: String,
-    pub details: Option<String>,
-}
-
 /// Response when import is started
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportStarted {
@@ -496,19 +489,6 @@ async fn run_import<R: Runtime>(
 
     if total_segments == 0 {
         warn!("No speech detected in audio");
-
-        // Emit warning to frontend
-        let _ = app.emit(
-            "import-warning",
-            ImportWarning {
-                warning: "No speech detected in audio file".to_string(),
-                details: Some(
-                    "The file was imported successfully, but VAD did not detect any speech. \
-                     The meeting was created but contains no transcripts."
-                        .to_string(),
-                ),
-            },
-        );
         // Still create the meeting, just with no transcripts
     }
 

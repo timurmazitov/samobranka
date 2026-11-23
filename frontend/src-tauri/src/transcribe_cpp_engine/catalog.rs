@@ -74,7 +74,10 @@ pub struct ModelInfo {
     pub size_mb: u32,
     /// Exact artifact size in bytes; downloads are validated against it.
     pub size_bytes: u64,
-    /// Catalog description (purpose and trade-offs).
+    /// Catalog description (purpose and trade-offs) in English. The model
+    /// card resolves `models.transcribeCpp.descriptions.<family>` from the
+    /// frontend catalog instead (native-i18n spec D6); this prose is the
+    /// fallback for a family whose keys have not landed yet.
     pub description: String,
     /// SHA-256 digest of the artifact as published upstream, lowercase hex.
     pub sha256: String,
@@ -92,6 +95,7 @@ pub struct ModelSpec {
     pub filename: &'static str,
     pub size_mb: u32,
     pub exact_bytes: u64,
+    /// English fallback prose; see [`ModelInfo::description`].
     pub description: &'static str,
     /// Lowercase hex SHA-256 as reported by the Hugging Face LFS metadata.
     pub sha256: &'static str,
@@ -151,7 +155,7 @@ macro_rules! model_catalog {
                 filename: concat!($slug, "-", stringify!($quant), ".gguf"),
                 size_mb: $size_mb,
                 exact_bytes: $bytes,
-                description: concat!($description, " Quantization: ", stringify!($quant), "."),
+                description: $description,
                 sha256: $sha256,
                 source_url: concat!(
                     "https://huggingface.co/handy-computer/",
@@ -458,6 +462,22 @@ mod tests {
         for spec in catalog() {
             let size_mib = (spec.exact_bytes as f64 / (1024.0 * 1024.0)).round() as u32;
             assert_eq!(spec.size_mb, size_mib, "model {} size_mb", spec.name);
+        }
+    }
+
+    #[test]
+    fn descriptions_carry_no_compile_time_quantization_suffix() {
+        // The card renders descriptions from frontend i18n keys and shows the
+        // quantization as a badge plus a localized note (native-i18n ticket
+        // 04). The Rust prose is only the English fallback, so the macro must
+        // not append the old " Quantization: <QUANT>." sentence to it.
+        for spec in catalog() {
+            assert!(
+                !spec.description.contains("Quantization"),
+                "model {} still carries the appended quantization sentence: {}",
+                spec.name,
+                spec.description
+            );
         }
     }
 

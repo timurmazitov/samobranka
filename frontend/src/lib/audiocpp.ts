@@ -106,6 +106,18 @@ export function taskLabel(_task: AudioCppModelTask): string {
   return i18n.t('models.audioCpp.taskDiarization');
 }
 
+/**
+ * Card description, resolved by family from the interface catalog
+ * (`models.audioCpp.descriptions.<family>`, native-i18n spec D6), the same
+ * precedent as `taskLabel()`. `fallback` is the Rust catalog's English prose,
+ * shown for a family whose keys have not landed yet.
+ */
+export function modelDescription(family: string, fallback: string): string {
+  const key = `models.audioCpp.descriptions.${family}`;
+  const resolved = i18n.t(key, { defaultValue: fallback });
+  return resolved === key ? fallback : resolved;
+}
+
 /** Whether a status value represents an in-flight download. */
 export function isDownloadingStatus(status: AudioCppModelStatus): boolean {
   return typeof status === 'object' && status !== null && 'Downloading' in status;

@@ -19,10 +19,6 @@ interface TranscriptViewProps {
   enableStreaming?: boolean; // Enable streaming effect for live transcription UX
 }
 
-interface SpeechDetectedEvent {
-  message: string;
-}
-
 // Helper function to remove consecutive word repetitions (especially short words ≤2 letters)
 function cleanRepetitions(text: string): string {
   if (!text || text.trim().length === 0) return text;
@@ -145,7 +141,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
 
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
-      unsubscribe = await listen<SpeechDetectedEvent>('speech-detected', () => {
+      unsubscribe = await listen<Record<string, never>>('speech-detected', () => {
         setSpeechDetected(true);
       });
     };

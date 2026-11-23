@@ -146,7 +146,11 @@
       "viewMeeting": "Открыть встречу"
     },
     "transcriptCopied": "Транскрипция скопирована в буфер обмена",
-    "fallbackMeetingTitle": "Встреча {{timestamp}}"
+    "fallbackMeetingTitle": "Встреча {{timestamp}}",
+    "micSwitched": "Микрофон для этой встречи переключён на «{{label}}».",
+    "micFallbackFailed": "Не удалось переключиться на микрофон «{{label}}»: {{error}}",
+    "micUnavailable": "Микрофон недоступен — запись только системного звука.",
+    "micRecoveryExhausted": "Не удалось восстановить микрофон «{{label}}» — запись продолжается без микрофона. Остановите запись и начните новую."
   },
   "recordingSettings": {
     "title": "Настройки записи",
@@ -616,11 +620,27 @@
       "openModelsFolder": "Открыть папку моделей",
       "runtimeUnavailable": "Движок диаризации недоступен в этой системе",
       "runtimeUnavailableDescription": "Модель всё равно можно скачать: разметка спикеров заработает, когда нативная библиотека audio.cpp станет доступна.",
-      "taskDiarization": "Диаризация"
+      "taskDiarization": "Диаризация",
+      "descriptions": {
+        "nemotron_3_diar": "Диаризация спикеров (Nemotron-3, BF16, до 8 спикеров в порядке появления). Определяет, кому из спикеров принадлежит каждый фрагмент транскрипции."
+      }
     },
     "transcribeCpp": {
       "failedToLoadModels": "Не удалось загрузить модели transcribe.cpp",
-      "openModelsFolder": "Открыть папку моделей"
+      "openModelsFolder": "Открыть папку моделей",
+      "quantizationNote": "Квантование: {{quantization}}.",
+      "descriptions": {
+        "gigaam-v3-ctc": "Распознавание русской речи (GigaAM v3 CTC). Подходит для встреч на русском языке: высокая точность транскрибации.",
+        "gigaam-v3-e2e-ctc": "Распознавание русской речи (GigaAM v3 end-to-end CTC). Лучшее соотношение точности и размера для встреч на русском языке.",
+        "gigaam-v3-rnnt": "Распознавание русской речи (GigaAM v3 RNN-T). Пунктуация точнее, чем у варианта CTC.",
+        "gigaam-v3-e2e-rnnt": "Распознавание русской речи (GigaAM v3 end-to-end RNN-T). Вариант с упором на пунктуацию в полном размере.",
+        "parakeet-tdt-0.6b-v3": "Многоязычное распознавание речи (NVIDIA Parakeet TDT 0.6B v3). Уверенно работает с русским и английским.",
+        "parakeet-ultra": "Многоязычное распознавание речи (Parakeet Ultra). Провайдер по умолчанию: баланс качества на русском и английском при умеренном размере.",
+        "qwen3-asr-0.6b": "Многоязычное распознавание речи (Qwen3-ASR 0.6B). Лучшая точность на русском в каталоге.",
+        "qwen3-asr-1.7b": "Многоязычное распознавание речи (Qwen3-ASR 1.7B). Лучшая точность на русском среди семейств каталога.",
+        "whisper-large-v3-turbo": "Многоязычное распознавание речи (OpenAI Whisper large-v3 Turbo). Быстрый запасной вариант для редких языков.",
+        "whisper-large-v3": "Многоязычное распознавание речи (OpenAI Whisper large-v3). Самая точная версия Whisper."
+      }
     },
     "builtIn": {
       "downloaded": "Модель {{model}} успешно скачана",
@@ -673,6 +693,8 @@
     "unavailableDevice": "{{name}} — недоступен — выберите устройство",
     "noMicrophones": "Микрофоны не найдены",
     "microphoneLevels": "Уровень микрофона:",
+    "meterActive": "Активен",
+    "meterInactive": "Не активен",
     "microphoneInfo": "Записывает голос и окружающий звук",
     "systemAudio": "Системный звук",
     "systemAudioAria": "О выборе системного звука",
@@ -911,6 +933,9 @@
       "changesSaved": "Изменения сохранены",
       "changesSaveFailed": "Не удалось сохранить изменения"
     },
+    "meetingFolder": {
+      "openFailed": "Не удалось открыть папку записи"
+    },
     "templates": {
       "selected": "Шаблон выбран",
       "selectedDescription": "Конспект будет создан по шаблону «{{name}}»"
@@ -1058,7 +1083,9 @@
       "deleteBlocks_one": "Удалить блок",
       "deleteBlocks_few": "Удалить {{count}} блока",
       "deleteBlocks_many": "Удалить {{count}} блоков",
-      "deleteBlocks_other": "Удалить {{count}} блоков"
+      "deleteBlocks_other": "Удалить {{count}} блоков",
+      "undo": "Отменить",
+      "redo": "Повторить"
     },
     "editor": {
       "placeholder": "Введите «/» для команд...",

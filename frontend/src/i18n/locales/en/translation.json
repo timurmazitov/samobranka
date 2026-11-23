@@ -146,7 +146,11 @@
       "viewMeeting": "View Meeting"
     },
     "transcriptCopied": "Transcript copied to clipboard",
-    "fallbackMeetingTitle": "Meeting {{timestamp}}"
+    "fallbackMeetingTitle": "Meeting {{timestamp}}",
+    "micSwitched": "Microphone switched to {{label}} for this meeting.",
+    "micFallbackFailed": "Could not switch to microphone {{label}}: {{error}}",
+    "micUnavailable": "No microphone available — recording system audio only.",
+    "micRecoveryExhausted": "Microphone '{{label}}' could not be recovered — recording continues without a microphone. Stop the recording and start a new one."
   },
   "recordingSettings": {
     "title": "Recording Settings",
@@ -606,11 +610,27 @@
       "openModelsFolder": "Open models folder",
       "runtimeUnavailable": "Diarization engine is unavailable on this system",
       "runtimeUnavailableDescription": "The model can still be downloaded; speaker labels will start once the native audio.cpp library is available.",
-      "taskDiarization": "Diarization"
+      "taskDiarization": "Diarization",
+      "descriptions": {
+        "nemotron_3_diar": "Speaker diarization (Nemotron-3, BF16, up to 8 speakers by arrival order). Attributes transcript segments to speakers."
+      }
     },
     "transcribeCpp": {
       "failedToLoadModels": "Failed to load transcribe.cpp models",
-      "openModelsFolder": "Open models folder"
+      "openModelsFolder": "Open models folder",
+      "quantizationNote": "Quantization: {{quantization}}.",
+      "descriptions": {
+        "gigaam-v3-ctc": "Russian speech recognition (GigaAM v3 CTC). Strong accuracy for Russian meetings.",
+        "gigaam-v3-e2e-ctc": "Russian speech recognition (GigaAM v3 end-to-end CTC). Best accuracy per size for Russian meetings.",
+        "gigaam-v3-rnnt": "Russian speech recognition (GigaAM v3 RNN-T). Better punctuation than the CTC variant.",
+        "gigaam-v3-e2e-rnnt": "Russian speech recognition (GigaAM v3 end-to-end RNN-T). Punctuation-forward variant at full size.",
+        "parakeet-tdt-0.6b-v3": "Multilingual speech recognition (NVIDIA Parakeet TDT 0.6B v3) with strong Russian and English accuracy.",
+        "parakeet-ultra": "Multilingual speech recognition (Parakeet Ultra). Provider default: balanced Russian and English quality at a moderate size.",
+        "qwen3-asr-0.6b": "Multilingual speech recognition (Qwen3-ASR 0.6B), the strongest Russian accuracy in the catalog.",
+        "qwen3-asr-1.7b": "Multilingual speech recognition (Qwen3-ASR 1.7B), the strongest Russian accuracy family in the catalog.",
+        "whisper-large-v3-turbo": "Multilingual speech recognition (OpenAI Whisper large-v3 Turbo), the fast Whisper fallback for long-tail languages.",
+        "whisper-large-v3": "Multilingual speech recognition (OpenAI Whisper large-v3), the most accurate Whisper release."
+      }
     },
     "builtIn": {
       "downloaded": "Model {{model}} downloaded successfully",
@@ -661,6 +681,8 @@
     "unavailableDevice": "{{name}} — Unavailable — choose a device",
     "noMicrophones": "No microphone devices found",
     "microphoneLevels": "Microphone Levels:",
+    "meterActive": "Active",
+    "meterInactive": "Inactive",
     "microphoneInfo": "Records your voice and ambient sound",
     "systemAudio": "System Audio",
     "systemAudioAria": "About system audio selection",
@@ -894,6 +916,9 @@
       "changesSaved": "Changes saved successfully",
       "changesSaveFailed": "Failed to save changes"
     },
+    "meetingFolder": {
+      "openFailed": "Failed to open recording folder"
+    },
     "templates": {
       "selected": "Template selected",
       "selectedDescription": "Using \"{{name}}\" template for summary generation"
@@ -1033,7 +1058,9 @@
       "copyBlocks_one": "Copy block",
       "copyBlocks_other": "Copy {{count}} blocks",
       "deleteBlocks_one": "Delete block",
-      "deleteBlocks_other": "Delete {{count}} blocks"
+      "deleteBlocks_other": "Delete {{count}} blocks",
+      "undo": "Undo",
+      "redo": "Redo"
     },
     "editor": {
       "placeholder": "Type '/' for commands...",

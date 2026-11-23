@@ -6,6 +6,7 @@ import {
   formatModelSize,
   isAvailableStatus,
   isDownloadingStatus,
+  modelDescription,
   taskLabel,
   type AudioCppDownloadCompleteEvent,
   type AudioCppDownloadErrorEvent,
@@ -456,7 +457,9 @@ function AudioCppModelCard({
               </span>
               <span className="text-xs text-gray-500">{formatModelSize(model.size_mb)}</span>
             </div>
-            <p className="text-sm text-gray-600">{model.description}</p>
+            <p className="text-sm text-gray-600">
+              {modelDescription(model.family, model.description)}
+            </p>
             <p className="text-xs text-gray-400 mt-1">{model.family}</p>
           </div>
 
