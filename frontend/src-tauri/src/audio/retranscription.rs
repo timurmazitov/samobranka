@@ -68,7 +68,31 @@ pub struct RetranscriptionProgress {
     pub stage: String, // "decoding", "transcribing", "saving"
     pub progress_percentage: u32,
     pub message: String,
+    /// Stable i18n identifier the frontend resolves through
+    /// `retranscribe.progress.<code>` (native-i18n spec D7). `None` keeps the
+    /// frontend on the English `message` fallback, so un-coded emissions are
+    /// byte-compatible with the pre-i18n payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Interpolation values for the frontend key (percent, counts, duration).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
+
+/// Codes for the `retranscription-progress` payload (native-i18n spec D7).
+/// The value is the frontend catalog key suffix
+/// (`retranscribe.progress.<code>`); the frontend pinning test extracts these
+/// constants and fails if a catalog key goes missing in either locale.
+const CODE_DECODING_FILE: &str = "decoding_file";
+const CODE_CONVERTING_FORMAT: &str = "converting_format";
+const CODE_DETECTING_SEGMENTS: &str = "detecting_segments";
+const CODE_DETECTING_SEGMENTS_PROGRESS: &str = "detecting_segments_progress";
+const CODE_LOADING_ENGINE: &str = "loading_engine";
+const CODE_TRANSCRIBING_SEGMENT: &str = "transcribing_segment";
+const CODE_SAVING_TRANSCRIPTS: &str = "saving_transcripts";
+const CODE_WRITING_FILES: &str = "writing_files";
+/// Reuses the existing `retranscribe.stages.complete` key on the frontend.
+const CODE_COMPLETE: &str = "complete";
 
 /// Result of retranscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,7 +200,15 @@ async fn run_retranscription<R: Runtime>(
     );
 
     // Emit progress: decoding
-    emit_progress(&app, &meeting_id, "decoding", 5, "Decoding audio file...");
+    emit_progress(
+        &app,
+        &meeting_id,
+        "decoding",
+        5,
+        "Decoding audio file...",
+        CODE_DECODING_FILE,
+        None,
+    );
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
@@ -201,6 +233,8 @@ async fn run_retranscription<R: Runtime>(
         "decoding",
         15,
         "Converting audio format...",
+        CODE_CONVERTING_FORMAT,
+        None,
     );
 
     // Check for cancellation
@@ -217,7 +251,15 @@ async fn run_retranscription<R: Runtime>(
         audio_samples.len()
     );
 
-    emit_progress(&app, &meeting_id, "vad", 20, "Detecting speech segments...");
+    emit_progress(
+        &app,
+        &meeting_id,
+        "vad",
+        20,
+        "Detecting speech segments...",
+        CODE_DETECTING_SEGMENTS,
+        None,
+    );
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
@@ -249,6 +291,11 @@ async fn run_retranscription<R: Runtime>(
                         "Detecting speech segments... {}% ({} found)",
                         vad_progress, segments_found
                     ),
+                    CODE_DETECTING_SEGMENTS_PROGRESS,
+                    Some(serde_json::json!({
+                        "percent": vad_progress,
+                        "found": segments_found,
+                    })),
                 );
 
                 // Return false to cancel if cancellation requested
@@ -314,6 +361,8 @@ async fn run_retranscription<R: Runtime>(
         "transcribing",
         TRANSCRIPTION_BAND.0,
         "Loading transcription engine...",
+        CODE_LOADING_ENGINE,
+        None,
     );
 
     // Exact model selection with no fallback: a batch request naming a model
@@ -387,6 +436,12 @@ async fn run_retranscription<R: Runtime>(
                 processable_count,
                 segment_duration_sec
             ),
+            CODE_TRANSCRIBING_SEGMENT,
+            Some(serde_json::json!({
+                "current": i + 1,
+                "total": processable_count,
+                "duration_sec": segment_duration_sec,
+            })),
         );
 
         // Skip very short segments (< 100ms of audio = 1600 samples at 16kHz)
@@ -472,7 +527,15 @@ async fn run_retranscription<R: Runtime>(
 
     // Saving owns 70..75: the last five points before the band the frontend
     // holds for diarization (75..100, fed by the shared pass state).
-    emit_progress(&app, &meeting_id, "saving", SAVING_PROGRESS, "Saving transcripts...");
+    emit_progress(
+        &app,
+        &meeting_id,
+        "saving",
+        SAVING_PROGRESS,
+        "Saving transcripts...",
+        CODE_SAVING_TRANSCRIPTS,
+        None,
+    );
 
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
@@ -549,6 +612,8 @@ async fn run_retranscription<R: Runtime>(
         "saving",
         DIARIZATION_BAND_START,
         "Writing transcript files...",
+        CODE_WRITING_FILES,
+        None,
     );
 
     if let Err(e) = write_transcripts_json(&folder_path, &segments) {
@@ -578,6 +643,8 @@ async fn run_retranscription<R: Runtime>(
         "complete",
         DIARIZATION_BAND_START,
         "Retranscription complete",
+        CODE_COMPLETE,
+        None,
     );
 
     // The transcript transaction has committed and the files are written, so
@@ -595,13 +662,17 @@ async fn run_retranscription<R: Runtime>(
     })
 }
 
-/// Emit progress event
+/// Emit progress event (native-i18n spec D7): the English `message` stays the
+/// diagnostic fallback, `code` (+ optional `params`) is what the frontend
+/// renders through `retranscribe.progress.<code>`.
 fn emit_progress<R: Runtime>(
     app: &AppHandle<R>,
     meeting_id: &str,
     stage: &str,
     progress: u32,
     message: &str,
+    code: &str,
+    params: Option<serde_json::Value>,
 ) {
     let _ = app.emit(
         "retranscription-progress",
@@ -610,6 +681,8 @@ fn emit_progress<R: Runtime>(
             stage: stage.to_string(),
             progress_percentage: progress,
             message: message.to_string(),
+            code: Some(code.to_string()),
+            params,
         },
     );
 }
@@ -736,6 +809,45 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 mod tests {
     use super::super::constants::AUDIO_EXTENSIONS;
     use super::*;
+
+    /// Spec D7, the same additive contract as the import progress payload:
+    /// `code` (+ `params`) alongside the English `message`, omitted when the
+    /// emitter has no code so the old payload shape is untouched.
+    #[test]
+    fn retranscription_progress_carries_code_and_params_additively() {
+        let with_code = serde_json::to_value(RetranscriptionProgress {
+            meeting_id: "m-1".to_string(),
+            stage: "vad".to_string(),
+            progress_percentage: 22,
+            message: "Detecting speech segments... 40% (3 found)".to_string(),
+            code: Some("detecting_segments_progress".to_string()),
+            params: Some(serde_json::json!({ "percent": 40, "found": 3 })),
+        })
+        .unwrap();
+        assert_eq!(with_code["meeting_id"], "m-1");
+        assert_eq!(with_code["code"], "detecting_segments_progress");
+        assert_eq!(with_code["params"]["percent"], 40);
+        assert_eq!(with_code["params"]["found"], 3);
+        assert_eq!(
+            with_code["message"], "Detecting speech segments... 40% (3 found)",
+            "the English prose stays as the diagnostic fallback"
+        );
+
+        let without_code = serde_json::to_value(RetranscriptionProgress {
+            meeting_id: "m-1".to_string(),
+            stage: "decoding".to_string(),
+            progress_percentage: 5,
+            message: "Decoding audio file...".to_string(),
+            code: None,
+            params: None,
+        })
+        .unwrap();
+        assert!(
+            without_code.get("code").is_none(),
+            "an un-coded payload keeps the pre-i18n shape"
+        );
+        assert!(without_code.get("params").is_none());
+    }
 
     #[test]
     fn test_create_transcript_segments_empty() {

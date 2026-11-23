@@ -49,12 +49,95 @@ Rust sources:
 
 ## Acceptance
 
-- Running an import and a retranscription in Russian shows every phase in
+- [ ] Running an import and a retranscription in Russian shows every phase in
   Russian, with correct plural forms for 1 / 2–4 / 5+ segments and correct
-  decimal separators.
-- An unknown `code` falls back to the English `message`, never blank.
-- Cancelling mid-run still shows a sensible message (`"Import cancelled"` /
-  `"Retranscription cancelled"` come through `ImportError`/`RetranscriptionError`,
-  which is ticket-05-shaped coding — cover or explicitly defer).
-- `i18n-parity`, `i18n-usage`, `cargo test` pass; verified in `tauri:dev` on a
-  real synthetic audio file (no private recordings in reports).
+  decimal separators. *(Covered by unit tests — `native-progress.test.ts`
+  plural/decimal cases, `native-progress-render.test.tsx` ru renders — but the
+  live run is deferred to the consolidated `tauri:dev` pass on a synthetic
+  audio file; see ## Comments.)*
+- [x] An unknown `code` falls back to the English `message`, never blank.
+  *(Unit-tested in both dialogs; `native-progress.test.ts` also pins
+  absent-code and inert-params cases.)*
+- [x] Cancelling mid-run still shows a sensible message — **covered without
+  payload coding**; see the cancel-flow decision in ## Comments.
+- [x] `i18n-parity`, `i18n-usage`, `cargo test` pass.
+- [ ] Verified in `tauri:dev` on a real synthetic audio file (no private
+  recordings in reports). *(Consolidated GUI pass across the native-i18n
+  tickets; not run here.)*
+
+## Comments
+
+- 2026-11-23 (implementer, branch `feat/ni-06`): Additive coding per D7 —
+  `code` (+ optional `params`) on `ImportProgress` and
+  `RetranscriptionProgress`, `#[serde(skip_serializing_if)]` so an un-coded
+  payload is byte-identical to the old shape (the pinned
+  `batch_event_payloads_share_the_engine_agnostic_shape` test in `common.rs`
+  extended with `code: None, params: None`). Codes are `CODE_*` constants in
+  `import.rs` / `retranscription.rs` / `decoder.rs`; the frontend pinning test
+  `tests/lib/native-progress-i18n.test.ts` extracts them from the Rust sources
+  and fails if a catalog key goes missing in either locale or a stage token
+  loses its caption word. The English `message` prose is unchanged everywhere.
+  - **decoder.rs**: the `ProgressCallback` signature changed from
+    `(u32, &str)` to `&DecodeProgress { percent, message, code, params }` so
+    the decoder can emit codes itself instead of import pattern-matching the
+    prose back. Only `import.rs` supplies callbacks; retranscription uses the
+    `None` paths. Resampling percent in `params` uses `{:.0}` rounding to
+    match the fallback prose.
+  - **Frontend**: `src/lib/native-progress.ts` (the seam, mirroring
+    `diarizationStageMessage`); the dialogs resolve
+    `t('importAudio.progress.<code>', params)` /
+    `t('retranscribe.progress.<code>', params)` in both the bar caption and
+    the dialog description, falling back to `message`. `complete` reuses the
+    existing `importAudio.stages.complete` / `retranscribe.stages.complete`
+    keys (D7 reuse rule, pinned by the resolver test). Plurals:
+    `detecting_segments_progress_{one,few,many,other}` selected via `count`
+    from `params.found`.
+  - **`transcribing_segment` deviation from the ticket's plural ask**: the
+    ru wording is the idiomatic «Транскрибация: сегмент N из M» where the
+    noun does **not** decline after the following numeral (like «Страница 2 из
+    5»). A `_one/_few/_many/_other` family would be four identical strings;
+    spec D10 ("cheaper than any plural machinery") — single key, plurals
+    kept only where Russian genuinely declines (`...found`). Documented here
+    rather than silently.
+  - **Duration formatting**: `params.duration_sec` travels as a raw number;
+    the resolver renders it through `formatDecimal(..., 1)` → «1,2 с» in ru,
+    `1.2s` in en, consistent with `formatModelSize`.
+  - **barStage decision (RetranscribeDialog.tsx raw snake_case fallback)**:
+    **localized, raw token kept only for unknown stages.** Known native stage
+    tokens (`decoding`, `vad`, `transcribing`, `saving`) now resolve through
+    `retranscribe.stages.*` (import gains `importAudio.stages.copying/
+    resampling/...` likewise); an unseen token still renders verbatim. It is
+    a user-visible caption, so per the governing rule it must not be raw —
+    but keeping the raw token for unknown stages preserves diagnosability of
+    a future native stage from a screenshot, which was the only real value of
+    the old behavior. Unit-tested both ways.
+  - **Cancel-flow decision (acceptance item 3): covered without coding
+    `ImportError`/`RetranscriptionError`.** Both dialogs already render a
+    localized cancellation themselves: Cancel press → `t('importAudio.toast.
+    cancelled')` / `t('retranscribe.cancelledToast')` toast, and the import
+    hook early-returns on `import-error` after a user cancel
+    (`isCancelledRef`), while the retranscription dialog closes on cancel.
+    So the Rust "Import cancelled" / "Retranscription cancelled" prose never
+    reaches the screen as the primary message. The error payloads' own coding
+    (which would also cover `"No speech detected in audio file"` — still
+    English verbatim in the retranscribe error block) is ticket-05-shaped and
+    **explicitly deferred** to that error-code follow-up; the frontend
+    already mirrors the toast wording, so this is not a user-visible English
+    surface on the cancel path.
+- 2026-11-23 (implementer close-out): Ran, on Linux x86_64, after merging the
+  `feat/native-i18n` tip: `cargo test -p samobranka --lib` → 767 pass / 0 fail
+  / 7 ignored (`CARGO_TARGET_DIR=/home/timur/sources/tmp/cargo-target-ni-06`;
+  `/tmp` ran out of space mid-run — moved off tmpfs); `cargo clippy -p
+  samobranka --lib` → no new warnings in the touched files (4 pre-existing
+  unused-import warnings in `build/ffmpeg.rs`, `lib.rs`, `diarization_run.rs`).
+  Frontend (`bun test`, per-file): `native-progress` 12 pass,
+  `native-progress-i18n` 5 pass, `native-progress-render` 9 pass,
+  `i18n-parity` 5 pass, `i18n-usage` 11 pass, `import-audio-diarization` 6
+  pass, `retranscribe-diarization-bar` 6 pass, `retranscribe-diarization-toast`
+  3 pass, `swept-components-i18n` 7 pass. Full `bun test tests/`: 586 pass / 9
+  fail — identical to the pre-change baseline (the known 9 cross-file
+  `mock.module` leaks; verified by diffing the failure lists). `tsc --noEmit`:
+  only the pre-existing `stage-transcribe-native.test.ts` TS7053 baseline
+  error. **Untested:** the live app (`tauri:dev` not started per the
+  consolidated GUI pass; to be exercised with a synthetic audio file in both
+  languages, incl. the 1/2–4/5+ segment plural forms and the cancel toast).

@@ -192,8 +192,23 @@
     "cancelledToast": "Retranscription cancelled",
     "diarizationHint": "You can close this dialog — diarization continues and shows in the meeting's speakers panel.",
     "stages": {
+      "decoding": "Decoding",
+      "vad": "Detecting speech",
+      "transcribing": "Transcribing",
+      "saving": "Saving",
       "diarizing": "Diarizing…",
       "complete": "Retranscription complete"
+    },
+    "progress": {
+      "decoding_file": "Decoding audio file...",
+      "converting_format": "Converting audio format...",
+      "detecting_segments": "Detecting speech segments...",
+      "detecting_segments_progress_one": "Detecting speech segments... {{percent}}% ({{count}} found)",
+      "detecting_segments_progress_other": "Detecting speech segments... {{percent}}% ({{count}} found)",
+      "loading_engine": "Loading transcription engine...",
+      "transcribing_segment": "Transcribing segment {{count}} of {{total}} ({{duration}}s)...",
+      "saving_transcripts": "Saving transcripts...",
+      "writing_files": "Writing transcript files..."
     },
     "actions": {
       "done": "Done"
@@ -344,8 +359,32 @@
       "done": "Done"
     },
     "stages": {
+      "copying": "Copying",
+      "decoding": "Decoding",
+      "resampling": "Converting",
+      "vad": "Detecting speech",
+      "transcribing": "Transcribing",
+      "saving": "Saving",
       "diarizing": "Diarizing…",
       "complete": "Import complete"
+    },
+    "progress": {
+      "creating_folder": "Creating meeting folder...",
+      "copying_file": "Copying audio file...",
+      "decoding_file": "Decoding audio file...",
+      "decoding_percent": "Decoding audio: {{percent}}%",
+      "decoding_complete": "Decoding complete",
+      "ffmpeg_converting": "Converting audio format with FFmpeg...",
+      "ffmpeg_complete": "FFmpeg conversion complete",
+      "converting_format": "Converting audio format...",
+      "resampling_percent": "Resampling audio: {{percent}}%",
+      "detecting_segments": "Detecting speech segments...",
+      "detecting_segments_progress_one": "Detecting speech segments... {{percent}}% ({{count}} found)",
+      "detecting_segments_progress_other": "Detecting speech segments... {{percent}}% ({{count}} found)",
+      "loading_engine": "Loading transcription engine...",
+      "transcribing_segment": "Transcribing segment {{count}} of {{total}} ({{duration}}s)...",
+      "creating_meeting": "Creating meeting...",
+      "writing_files": "Writing transcript files..."
     },
     "diarizationHint": "You can close this dialog — speaker detection continues and shows in the meeting's speakers panel.",
     "toast": {

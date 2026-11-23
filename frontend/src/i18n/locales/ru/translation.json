@@ -194,8 +194,25 @@
     "cancelledToast": "Повторная транскрибация отменена",
     "diarizationHint": "Диалог можно закрыть — диаризация продолжится и будет видна в панели спикеров встречи.",
     "stages": {
+      "decoding": "Декодирование",
+      "vad": "Поиск речи",
+      "transcribing": "Транскрибация",
+      "saving": "Сохранение",
       "diarizing": "Диаризация…",
       "complete": "Повторная транскрибация завершена"
+    },
+    "progress": {
+      "decoding_file": "Декодирование аудиофайла...",
+      "converting_format": "Преобразование формата аудио...",
+      "detecting_segments": "Определение речевых сегментов...",
+      "detecting_segments_progress_one": "Определение речевых сегментов... {{percent}}% (найден {{count}} сегмент)",
+      "detecting_segments_progress_few": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегмента)",
+      "detecting_segments_progress_many": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегментов)",
+      "detecting_segments_progress_other": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегментов)",
+      "loading_engine": "Загрузка движка транскрибации...",
+      "transcribing_segment": "Транскрибация: сегмент {{count}} из {{total}} ({{duration}} с)...",
+      "saving_transcripts": "Сохранение транскрипций...",
+      "writing_files": "Запись файлов транскрипции..."
     },
     "actions": {
       "done": "Готово"
@@ -346,8 +363,34 @@
       "done": "Готово"
     },
     "stages": {
+      "copying": "Копирование",
+      "decoding": "Декодирование",
+      "resampling": "Преобразование",
+      "vad": "Поиск речи",
+      "transcribing": "Транскрибация",
+      "saving": "Сохранение",
       "diarizing": "Диаризация…",
       "complete": "Импорт завершён"
+    },
+    "progress": {
+      "creating_folder": "Создание папки встречи...",
+      "copying_file": "Копирование аудиофайла...",
+      "decoding_file": "Декодирование аудиофайла...",
+      "decoding_percent": "Декодирование аудио: {{percent}}%",
+      "decoding_complete": "Декодирование завершено",
+      "ffmpeg_converting": "Преобразование формата аудио через FFmpeg...",
+      "ffmpeg_complete": "Преобразование FFmpeg завершено",
+      "converting_format": "Преобразование формата аудио...",
+      "resampling_percent": "Передискретизация аудио: {{percent}}%",
+      "detecting_segments": "Определение речевых сегментов...",
+      "detecting_segments_progress_one": "Определение речевых сегментов... {{percent}}% (найден {{count}} сегмент)",
+      "detecting_segments_progress_few": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегмента)",
+      "detecting_segments_progress_many": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегментов)",
+      "detecting_segments_progress_other": "Определение речевых сегментов... {{percent}}% (найдено {{count}} сегментов)",
+      "loading_engine": "Загрузка движка транскрибации...",
+      "transcribing_segment": "Транскрибация: сегмент {{count}} из {{total}} ({{duration}} с)...",
+      "creating_meeting": "Создание встречи...",
+      "writing_files": "Запись файлов транскрипции..."
     },
     "diarizationHint": "Диалог можно закрыть — диаризация продолжится и будет видна в панели спикеров встречи.",
     "toast": {
