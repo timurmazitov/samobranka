@@ -8,6 +8,8 @@ import {
   formatModelSize,
   isAvailableStatus,
   isDownloadingStatus,
+  modelDescription,
+  quantizationNote,
   type TranscribeCppModelInfo,
   type TranscribeCppModelStatus,
 } from '../../src/lib/transcribeCpp';
@@ -98,6 +100,23 @@ describe('transcribe.cpp model manager types', () => {
     expect(formatModelSize(706)).toBe('706 MB');
     expect(formatModelSize(259)).toBe('259 MB');
     expect(formatModelSize(1591)).toBe('1.6 GB');
+  });
+
+  test('resolves the card description by family from the interface catalog', () => {
+    // The frontend catalog owns the card prose (native-i18n spec D6); the Rust
+    // `description` field is only the fallback for a family without keys yet.
+    expect(modelDescription('parakeet-ultra', 'RUST PROSE')).toContain('Parakeet Ultra');
+    // A dotted family name is an ordinary catalog key: i18next reassembles
+    // segments like `parakeet-tdt-0.6b` around the dots.
+    expect(modelDescription('parakeet-tdt-0.6b-v3', 'RUST PROSE')).toContain('NVIDIA Parakeet TDT');
+  });
+
+  test('falls back to the Rust catalog description for an unknown family', () => {
+    expect(modelDescription('family-without-keys', 'RUST PROSE')).toBe('RUST PROSE');
+  });
+
+  test('renders the quantization note the catalog macro used to append', () => {
+    expect(quantizationNote('Q8_0')).toBe('Quantization: Q8_0.');
   });
 
   test('carries family, quantization and sha256 metadata without a task field', () => {

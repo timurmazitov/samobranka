@@ -7,6 +7,7 @@ import {
   formatModelSize,
   isAvailableStatus,
   isDownloadingStatus,
+  modelDescription,
   taskLabel,
   type AudioCppModelInfo,
   type AudioCppModelStatus,
@@ -102,6 +103,16 @@ describe('audio.cpp model manager types', () => {
     expect(isAvailableStatus('Available')).toBeTrue();
     expect(isAvailableStatus('Missing')).toBeFalse();
     expect(isAvailableStatus({ Corrupted: { file_size: 1, expected_min_size: 2 } })).toBeFalse();
+  });
+
+  test('resolves the diarization card description by family', () => {
+    // Same D6 shape as transcribe.cpp: the card ignores the Rust-authored
+    // prose and resolves the family key from the interface catalog.
+    expect(modelDescription('nemotron_3_diar', 'RUST PROSE')).toContain('Nemotron-3');
+  });
+
+  test('falls back to the Rust catalog description for an unknown family', () => {
+    expect(modelDescription('family-without-keys', 'RUST PROSE')).toBe('RUST PROSE');
   });
 
   test('formats catalog sizes the way the other model managers do', () => {
