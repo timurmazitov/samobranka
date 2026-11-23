@@ -118,6 +118,11 @@ sqlx = { version = "0.8", features = [ "runtime-tokio", "sqlite", "chrono"] }
 
 # Common Tauri configuration
 tauri = { version = "2.6.2", features = [ "macos-private-api", "protocol-asset", "tray-icon"] }
+# Bare OS-locale probe for the l10n first-run fallback (native-i18n spec D3).
+# Not an i18n dialect crate, so spec D10 (no fluent/rust-i18n) is unaffected:
+# tauri 2.11 exposes no Rust locale API and tauri-plugin-os's Rust half is not
+# installed in this workspace, so there is no dependency-free probe available.
+sys-locale = "0.3"
 tauri-plugin-fs = "2.4.0"
 tauri-plugin-dialog = "2.3.0"
 tauri-plugin-store = "2.4.0"

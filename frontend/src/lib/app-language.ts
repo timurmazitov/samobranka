@@ -16,6 +16,16 @@ import { isAppLanguage, type AppLanguageCode } from '@/i18n';
 const STORE_FILE = 'preferences.json';
 const SETTING_KEY = 'app_language';
 
+/**
+ * The event `LanguageProvider.setLanguage` emits on every language switch so
+ * the Rust side updates its managed interface language without a restart
+ * (native-i18n spec D4). The payload is the bare language code. The Rust
+ * listener subscribes under the same literal, pinned by
+ * `tests/lib/app-language-parity.test.ts` against
+ * `l10n::language::LANGUAGE_CHANGED_EVENT`.
+ */
+export const APP_LANGUAGE_CHANGED_EVENT = 'app-language-changed';
+
 async function openStore() {
   const { Store } = await import('@tauri-apps/plugin-store');
   return Store.load(STORE_FILE);

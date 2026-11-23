@@ -18,6 +18,8 @@
 //! No i18n crate is introduced (spec D10): the format stays compatible with the
 //! frontend's `translation.json` files so the parity discipline is trivial.
 
+pub mod language;
+
 use serde::Deserialize;
 
 /// The supported interface languages, mirroring `AppLanguageCode` in

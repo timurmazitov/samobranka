@@ -580,6 +580,13 @@ pub fn run() {
             log::info!("Starting application...");
             log::info!("Application setup complete");
 
+            // Resolve the interface language before the tray exists (native-i18n
+            // spec D3/D4): reads `app_language` from preferences.json, falls
+            // back to the OS locale, keeps the value in managed state, and
+            // registers the `app-language-changed` listener. Must precede
+            // `create_tray` so ticket 03's menu build can read the state.
+            l10n::language::init_app_language(_app.handle());
+
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
