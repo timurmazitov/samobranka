@@ -50,6 +50,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod anthropic;
 pub mod groq;
+pub mod l10n;
 pub mod model_downloader;
 pub mod openrouter;
 pub mod state;
