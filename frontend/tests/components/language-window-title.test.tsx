@@ -24,6 +24,7 @@ mock.module('../../src/lib/app-language', () => ({
   // under bun, so English) without touching the Tauri store.
   loadAppLanguage: async () => null,
   saveAppLanguage: async () => {},
+  APP_LANGUAGE_CHANGED_EVENT: 'app-language-changed',
 }));
 
 const i18n = (await import('../../src/i18n')).default;

@@ -50,3 +50,57 @@ read it. Nothing does yet: grepping `app_language` / `preferences.json` in
 The frontend resolves from `navigator.language`; Rust resolves from the OS
 locale. These can legitimately differ from the webview's locale — the stored
 value is what makes them agree, so the absent-key test matters (spec D11).
+
+## Acceptance status
+
+- [x] Stored `app_language` wins over the OS locale, both directions
+  (`l10n/language.rs` `resolve_language` tests + the shared case vector).
+- [x] Absent key → OS locale: `ru`-family → `ru`, anything else → `en`
+  (`first_run_follows_the_os_locale`, rows in `SHARED_RESOLUTION_CASES`).
+- [x] Rust and the frontend never disagree on the same input:
+  `frontend/tests/lib/app-language-parity.test.ts` parses
+  `SHARED_RESOLUTION_CASES` out of `l10n/language.rs` and runs every row
+  through `resolveAppLanguage` (the frontend twin of `resolve_language`), and
+  pins the store file/key and the event-name literals on both sides.
+- [ ] Live switch in the running app (Settings → General updates the managed
+  value without restart) — listener and emit are unit-tested on both sides
+  (`listen_language_changed_routes_events_into_the_managed_state`,
+  `language-emit.test.tsx`); the end-to-end check happens in ticket 03's
+  consolidated `tauri:dev` tray pass.
+
+## Comments
+
+- 2026-11-23 (feat/ni-02): Implemented.
+  - `frontend/src-tauri/src/l10n/language.rs` (new submodule of `l10n`):
+    `AppLanguageState` (managed, internally-mutable cell — Tauri's
+    `StateManager` cannot replace a managed value after insertion),
+    `resolve_language(stored, os)` (stored exact-code gate mirroring
+    `isAppLanguage`, then `l10n::AppLanguage::normalize` on the OS tag),
+    `resolve_at_startup` via `tauri_plugin_store::StoreExt` reading
+    `preferences.json` / `app_language`, `handle_language_changed` +
+    `listen_language_changed` (a single call site for ticket 03 to add the
+    tray rebuild), and `init_app_language` wiring both from `setup()` before
+    `tray::create_tray` (`lib.rs`).
+  - **New dependency**: `sys-locale = "0.3"` (0.3.2). Approved path per
+    ticket/spec D3: tauri 2.11 exposes no Rust locale API and the Rust half
+    of `tauri-plugin-os` is not installed; `sys-locale` is a bare locale
+    probe, not an i18n dialect crate, so D10 is not violated. Probing is
+    isolated in `os_locale()` so the resolution logic stays injectable.
+  - Frontend: `APP_LANGUAGE_CHANGED_EVENT` + `resolveAppLanguage` added
+    (`app-language.ts`, `i18n/index.ts`); `LanguageProvider` resolves through
+    `resolveAppLanguage` and `setLanguage` emits the event (dynamic import
+    guarded on `__TAURI_INTERNALS__`, same pattern as `app-window-title.ts`;
+    emitted even when the store save fails).
+  - Ran: `cargo test -p samobranka --lib` — 764 pass / 0 fail / 7 ignored
+    (`CARGO_TARGET_DIR=/tmp/opencode/target-ni-02`, Linux x86_64);
+    `cargo clippy -p samobranka --lib` — no new warnings in the touched
+    files. `bun test` per file: `app-language-parity` 4 pass,
+    `language-emit` 2 pass, `language-window-title` 2 pass,
+    `i18n-parity` 5 pass, `i18n-usage` 3 pass. Full `bun test tests/`:
+    540 pass / 9 fail — the same 9 known cross-file `mock.module` leaks as
+    the stashed baseline run (534 pass / 9 fail; +6 are the new tests).
+    `tsc --noEmit`: only the pre-existing `stage-transcribe-native.test.ts`
+    TS7053 baseline error.
+  - Untested: the running app (`tauri:dev` not started per the consolidated
+    GUI pass; live tray/menu re-localization is ticket 03), and OS-locale
+    probing on non-Linux hosts (`sys-locale` code paths unexercised here).
