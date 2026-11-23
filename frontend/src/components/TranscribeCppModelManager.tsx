@@ -11,6 +11,8 @@ import {
   formatModelSize,
   isAvailableStatus,
   isDownloadingStatus,
+  modelDescription,
+  quantizationNote,
   type TranscribeCppDownloadCompleteEvent,
   type TranscribeCppDownloadErrorEvent,
   type TranscribeCppDownloadProgressEvent,
@@ -463,9 +465,12 @@ function TranscribeCppModelCard({
               <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">
                 {model.quantization}
               </span>
+              <span className="text-xs text-gray-500">{quantizationNote(model.quantization)}</span>
               <span className="text-xs text-gray-500">{formatModelSize(model.size_mb)}</span>
             </div>
-            <p className="text-sm text-gray-600">{model.description}</p>
+            <p className="text-sm text-gray-600">
+              {modelDescription(model.family, model.description)}
+            </p>
             <p className="text-xs text-gray-400 mt-1">{model.family}</p>
           </div>
 

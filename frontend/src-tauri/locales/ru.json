@@ -1,0 +1,17 @@
+{
+  "tray": {
+    "startRecording": "Начать запись",
+    "startingRecording": "Запуск записи...",
+    "pauseRecording": "Пауза записи",
+    "pausing": "Приостановка...",
+    "resumeRecording": "Продолжить запись",
+    "resuming": "Возобновление...",
+    "stopRecording": "Остановить запись",
+    "stopping": "Остановка...",
+    "downloadingModel": "Загрузка модели транскрибации...",
+    "openMainWindow": "Открыть главное окно",
+    "settings": "Настройки",
+    "checkForUpdates": "Проверить обновления",
+    "quit": "Выйти"
+  }
+}

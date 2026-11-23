@@ -198,6 +198,19 @@ test('lists the diarization model with its purpose and size', async () => {
   expect(text).toContain('BF16');
 });
 
+test('the card renders the localized description, not the Rust prose', async () => {
+  // native-i18n ticket 04: the description comes from
+  // `models.audioCpp.descriptions.<family>` (the `taskLabel()` precedent);
+  // a card still rendering `model.description` (the sentinel below) fails.
+  const client = new FakeClient();
+  client.models = [diarizationModel({ description: 'RUST FALLBACK PROSE' })];
+
+  const text = textOf(await render(client));
+
+  expect(text).toContain('Speaker diarization (Nemotron-3');
+  expect(text).not.toContain('RUST FALLBACK PROSE');
+});
+
 test('a foreign ASR entry never renders: transcription belongs to transcribe.cpp', async () => {
   const client = new FakeClient();
   client.models = [asrModel(), diarizationModel()];

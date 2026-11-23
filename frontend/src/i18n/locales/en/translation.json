@@ -610,11 +610,27 @@
       "openModelsFolder": "Open models folder",
       "runtimeUnavailable": "Diarization engine is unavailable on this system",
       "runtimeUnavailableDescription": "The model can still be downloaded; speaker labels will start once the native audio.cpp library is available.",
-      "taskDiarization": "Diarization"
+      "taskDiarization": "Diarization",
+      "descriptions": {
+        "nemotron_3_diar": "Speaker diarization (Nemotron-3, BF16, up to 8 speakers by arrival order). Attributes transcript segments to speakers."
+      }
     },
     "transcribeCpp": {
       "failedToLoadModels": "Failed to load transcribe.cpp models",
-      "openModelsFolder": "Open models folder"
+      "openModelsFolder": "Open models folder",
+      "quantizationNote": "Quantization: {{quantization}}.",
+      "descriptions": {
+        "gigaam-v3-ctc": "Russian speech recognition (GigaAM v3 CTC). Strong accuracy for Russian meetings.",
+        "gigaam-v3-e2e-ctc": "Russian speech recognition (GigaAM v3 end-to-end CTC). Best accuracy per size for Russian meetings.",
+        "gigaam-v3-rnnt": "Russian speech recognition (GigaAM v3 RNN-T). Better punctuation than the CTC variant.",
+        "gigaam-v3-e2e-rnnt": "Russian speech recognition (GigaAM v3 end-to-end RNN-T). Punctuation-forward variant at full size.",
+        "parakeet-tdt-0.6b-v3": "Multilingual speech recognition (NVIDIA Parakeet TDT 0.6B v3) with strong Russian and English accuracy.",
+        "parakeet-ultra": "Multilingual speech recognition (Parakeet Ultra). Provider default: balanced Russian and English quality at a moderate size.",
+        "qwen3-asr-0.6b": "Multilingual speech recognition (Qwen3-ASR 0.6B), the strongest Russian accuracy in the catalog.",
+        "qwen3-asr-1.7b": "Multilingual speech recognition (Qwen3-ASR 1.7B), the strongest Russian accuracy family in the catalog.",
+        "whisper-large-v3-turbo": "Multilingual speech recognition (OpenAI Whisper large-v3 Turbo), the fast Whisper fallback for long-tail languages.",
+        "whisper-large-v3": "Multilingual speech recognition (OpenAI Whisper large-v3), the most accurate Whisper release."
+      }
     },
     "builtIn": {
       "downloaded": "Model {{model}} downloaded successfully",

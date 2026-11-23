@@ -19,7 +19,6 @@ export interface RecordingState {
 }
 
 export interface RecordingStoppedPayload {
-  message: string;
   folder_path?: string;
   meeting_name?: string;
 }

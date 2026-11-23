@@ -249,7 +249,7 @@ async function showPage() {
   await act(async () => { renderer = create(<Harness />); });
   await act(async () => {
     handlers.get('recording-stopped')?.({
-      payload: { message: 'stopped', folder_path: '/recordings/meeting-1', meeting_name: 'Saved meeting' },
+      payload: { folder_path: '/recordings/meeting-1', meeting_name: 'Saved meeting' },
     });
     await settle();
   });
