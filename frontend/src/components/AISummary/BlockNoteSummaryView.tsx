@@ -7,6 +7,8 @@ import { AISummary } from './index';
 import { Block } from '@blocknote/core';
 import { useCreateBlockNote } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
+import { useTranslation } from 'react-i18next';
+import { blocknoteDictionary } from '@/lib/blocknote-i18n';
 import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
 import "@blocknote/shadcn/style.css";
 
@@ -84,9 +86,16 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   const isContentLoaded = useRef(false);
 
   // Create BlockNote editor for markdown parsing
-  const editor = useCreateBlockNote({
-    initialContent: undefined
-  });
+  const { i18n } = useTranslation();
+  const editor = useCreateBlockNote(
+    {
+      initialContent: undefined,
+      dictionary: blocknoteDictionary(i18n.language),
+    },
+    // BlockNote fixes its dictionary at creation: recreate on language switch
+    // so the rendered markdown's menus and tooltips localize (native-i18n).
+    [i18n.language],
+  );
 
   // Parse markdown to blocks when format is markdown
   useEffect(() => {
