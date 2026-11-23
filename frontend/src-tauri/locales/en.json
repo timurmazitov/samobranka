@@ -1,0 +1,17 @@
+{
+  "tray": {
+    "startRecording": "Start Recording",
+    "startingRecording": "Starting Recording...",
+    "pauseRecording": "Pause Recording",
+    "pausing": "Pausing...",
+    "resumeRecording": "Resume Recording",
+    "resuming": "Resuming...",
+    "stopRecording": "Stop Recording",
+    "stopping": "Stopping...",
+    "downloadingModel": "Downloading transcription model...",
+    "openMainWindow": "Open Main Window",
+    "settings": "Settings",
+    "checkForUpdates": "Check for Updates",
+    "quit": "Quit"
+  }
+}
