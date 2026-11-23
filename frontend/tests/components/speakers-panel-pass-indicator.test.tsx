@@ -251,7 +251,7 @@ test('an automatic pass shows its stage with a spinner next to the run button', 
   expect(text(instance)).not.toContain('%');
 });
 
-test('a stage with an honest percentage shows the number', async () => {
+test('a stage with an honest percentage shows the number, a committed stage does not claim the pass is done', async () => {
   const bridge = fakeListen();
   const store = new DiarizationPassStore(bridge.listen as never);
 
@@ -266,9 +266,22 @@ test('a stage with an honest percentage shows the number', async () => {
   expect(text(instance)).toContain('0%');
   expect(text(instance)).toContain(en.speakers.stages.loading_model);
 
+  // A stage's 100% is its own checkpoint, not the pass's: `loading_model
+  // 100%` mid-pass reads as "done", so the panel keeps the spinner and
+  // drops the number until the last stage (see `passStagePercentageDisplay`).
   emit(bridge, 'diarization-progress', {
     meeting_id: 'meeting-a',
     stage: 'loading_model',
+    progress_percentage: 100,
+  });
+  expect(text(instance)).not.toContain('%');
+  expect(text(instance)).toContain(en.speakers.stages.loading_model);
+
+  // The pass's last stage may show its percentage verbatim: its committed
+  // checkpoint is the final work before the terminal.
+  emit(bridge, 'diarization-progress', {
+    meeting_id: 'meeting-a',
+    stage: 'applying_labels',
     progress_percentage: 100,
   });
   expect(text(instance)).toContain('100%');

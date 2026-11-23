@@ -29,6 +29,7 @@ import {
   diarizationStageMessage,
   diarizationStatusMessage,
   hasInstalledDiarizationModel,
+  passStagePercentageDisplay,
   type DiarizationClient,
   type DiarizationPassStore,
 } from '@/lib/diarization';
@@ -257,7 +258,6 @@ export function SpeakersPanel({
   // not be read. `null` is deliberately not `false`: an unreadable list is not
   // knowledge of a missing model, so it must not disable the button forever.
   const [hasDiarizationModel, setHasDiarizationModel] = useState<boolean | null>(false);
-  const [isDiarizing, setIsDiarizing] = useState(false);
   const [diarizationReason, setDiarizationReason] = useState<string | null>(null);
   /**
    * Whether the native audio.cpp runtime is usable: `true` when the probe
@@ -271,10 +271,10 @@ export function SpeakersPanel({
   const diarizingRef = useRef(false);
 
   /**
-   * The shared pass state for this meeting. The panel reads the seam store —
-   * not only its own `isDiarizing` — so an automatic pass (import,
-   * retranscription, live stop) is visible here too and the manual-run button
-   * stays disabled while any pass runs, however it was started.
+   * The shared pass state for this meeting. The store is the panel's only
+   * running truth: an automatic pass (import, retranscription, live stop) is
+   * visible here and the manual-run button reads as running for it too, with
+   * no local flag that could disagree with the pass.
    */
   const subscribePass = useCallback(
     (onChange: () => void) => passStore.subscribe(onChange),
@@ -288,10 +288,11 @@ export function SpeakersPanel({
 
   /**
    * Whether the shared state says a pass is working for this meeting right
-   * now. A `failed` phase is not running: it is the honest death of a pass,
-   * and the panel must be able to start the same pass again from it.
+   * now — the panel's single running truth, automatic or manual. A `failed`
+   * phase is not running: it is the honest death of a pass, and the panel
+   * must be able to start the same pass again from it.
    */
-  const passRunning = passState !== null && passState.phase === 'running';
+  const isDiarizing = passState !== null && passState.phase === 'running';
 
   const loadSpeakers = useCallback(async () => {
     if (!meetingId) return;
@@ -412,19 +413,22 @@ export function SpeakersPanel({
     // pass blocks: a failed one is exactly what the retry restarts.
     if (
       !meetingId ||
-      isDiarizing ||
       hasDiarizationModel === false ||
       hasRuntime === false ||
       diarizingRef.current ||
       // A pass is already running for this meeting — started automatically
-      // or from elsewhere; the panel must not queue a second one.
+      // or from elsewhere; the panel must not queue a second one. This is the
+      // panel's only running truth (there is no separate local flag).
       passStore.getState(meetingId)?.phase === 'running'
     ) {
       return;
     }
 
     diarizingRef.current = true;
-    setIsDiarizing(true);
+    // Mark the pass running in the shared store, not a local copy: the store
+    // is the single source the button's running state is derived from, and
+    // native code's first stage will simply replace this record.
+    passStore.markPassStarted(meetingId);
     setDiarizationReason(null);
     setPanelError(null);
     // Whether the shared pass state may be cleared when this attempt ends.
@@ -462,12 +466,12 @@ export function SpeakersPanel({
       ownsFailure = result.status === 'failed';
     } finally {
       diarizingRef.current = false;
-      setIsDiarizing(false);
       // The command resolved; whatever stages the pass announced are over
-      // now. Clearing the shared state keeps the indicator honest even if a
-      // terminal event raced past this listener, so a finished manual run
-      // cannot leave a stale stage on screen — except after a failed result,
-      // where the failed terminal owns the state and the retry button lives.
+      // now. Clearing the shared state — which the running button state is
+      // derived from — keeps the indicator honest even if a terminal event
+      // raced past this listener, so a finished manual run cannot leave a
+      // stale stage on screen — except after a failed result, where the
+      // failed terminal owns the state and the retry button lives.
       if (meetingId && !(ownsFailure && passStore.getState(meetingId)?.phase === 'failed')) {
         passStore.clear(meetingId);
       }
@@ -626,9 +630,14 @@ export function SpeakersPanel({
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>
                 {diarizationStageMessage(passState.stage)}
-                {passState.progressPercentage !== null
-                  ? ` ${passState.progressPercentage}%`
-                  : ''}
+                {(() => {
+                  // A stage's percentage is shown only where it reads honestly:
+                  // `loading_model 100%` mid-pass would claim the pass is done,
+                  // so a committed stage just hands the spinner to the next one
+                  // (see `passStagePercentageDisplay`).
+                  const percent = passStagePercentageDisplay(passState);
+                  return percent !== null ? ` ${percent}%` : '';
+                })()}
               </span>
             </div>
           )}
@@ -685,9 +694,7 @@ export function SpeakersPanel({
                   size="sm"
                   data-testid="diarize-meeting-button"
                   onClick={handleDiarize}
-                  disabled={
-                    isDiarizing || hasDiarizationModel === false || hasRuntime === false || passRunning
-                  }
+                  disabled={isDiarizing || hasDiarizationModel === false || hasRuntime === false}
                   title={
                     hasDiarizationModel === false
                       ? DIARIZATION_NO_MODEL_MESSAGE
