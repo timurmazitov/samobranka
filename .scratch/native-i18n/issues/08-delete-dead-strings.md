@@ -1,6 +1,6 @@
 # Delete progress strings no listener reads
 
-Status: needs-info
+Status: ready-for-agent
 Type: task
 
 ## Context
@@ -52,3 +52,11 @@ Also `recording-started` (`recording_commands.rs:691-693`), `recording-stopped`
 - No unused English strings remain in the deleted set; `cargo build` free of dead
   code warnings for them.
 - The Vulkan decision is recorded in this file under `## Comments`.
+
+## Comments
+
+- 2026-11-23 (owner decision): `transcription-warning` / Vulkan-fallback notice —
+  **keep log-only, surface later**. Do not delete the emit and do not add a
+  frontend listener in this ticket. When it is surfaced it gets a `code` like
+  ticket 05. The emit stays as-is (or moves to log-only if the event emit itself
+  is dead weight); the dead-`message` rows above still get deleted.
