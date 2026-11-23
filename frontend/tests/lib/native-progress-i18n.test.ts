@@ -18,6 +18,19 @@ import ru from '../../src/i18n/locales/ru/translation.json';
 
 const RUST_ROOT = '../../src-tauri/src/audio';
 
+/**
+ * The progress-vocabulary modules the pinning test reads: the two path files
+ * plus `progress_codes.rs`, the shared registry the codes both paths use
+ * moved to. Every `const CODE_*` in these files must resolve in both locales,
+ * so extracting a constant to the shared module never drops it from the
+ * checked set.
+ */
+const VOCABULARY_FILES = [
+  `${RUST_ROOT}/progress_codes.rs`,
+  `${RUST_ROOT}/import.rs`,
+  `${RUST_ROOT}/retranscription.rs`,
+];
+
 /** `const CODE_[A-Z_]+: &str = "value";` → every value in the file. */
 function rustCodes(source: string): string[] {
   return [...source.matchAll(/const CODE_[A-Z_]+: &str = "([a-z_]+)";/g)].map((m) => m[1]);
@@ -83,11 +96,23 @@ function expectCodesResolved(module: 'import' | 'retranscribe', codes: string[])
   }
 }
 
-describe('import progress codes', () => {
-  const codes = rustCodes(readRust(`${RUST_ROOT}/import.rs`));
+/**
+ * The shared registry's codes are emitted on BOTH bars (the two paths use
+ * the same vocabulary through `super::progress_codes`), so every shared code
+ * must resolve under both namespaces, not only the path file's own.
+ */
+function pathCodes(path: string): string[] {
+  return [...rustCodes(readRust(path)), ...rustCodes(readRust(`${RUST_ROOT}/progress_codes.rs`))];
+}
 
-  test('every CODE_* in import.rs resolves in both locales', () => {
+describe('import progress codes', () => {
+  const codes = pathCodes(`${RUST_ROOT}/import.rs`);
+
+  test('every CODE_* in import.rs and the shared registry resolves in both locales', () => {
     expectCodesResolved('import', codes);
+    // Guards the extraction itself: a renamed const shape must not silently
+    // shrink the checked set below what the shared registry contributes.
+    expect(codes.length).toBeGreaterThanOrEqual(6);
   });
 
   test('the decoder-forwarded codes resolve too', () => {
@@ -98,8 +123,8 @@ describe('import progress codes', () => {
 });
 
 describe('retranscription progress codes', () => {
-  test('every CODE_* in retranscription.rs resolves in both locales', () => {
-    expectCodesResolved('retranscribe', rustCodes(readRust(`${RUST_ROOT}/retranscription.rs`)));
+  test('every CODE_* in retranscription.rs and the shared registry resolves in both locales', () => {
+    expectCodesResolved('retranscribe', pathCodes(`${RUST_ROOT}/retranscription.rs`));
   });
 });
 

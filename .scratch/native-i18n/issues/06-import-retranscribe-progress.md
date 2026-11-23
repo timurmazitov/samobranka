@@ -141,3 +141,19 @@ Rust sources:
   error. **Untested:** the live app (`tauri:dev` not started per the
   consolidated GUI pass; to be exercised with a synthetic audio file in both
   languages, incl. the 1/2–4/5+ segment plural forms and the cancel toast).
+- 2026-11-23 (review fix): **Shared progress vocabulary extracted to
+  `audio/progress_codes.rs`.** The duplicated `CODE_*` block (decoding_file,
+  converting_format, detecting_segments[_progress], loading_engine,
+  transcribing_segment, writing_files, complete) and the identical
+  decode/resample forward-progress-closure shape both lived twice, verbatim,
+  in `import.rs` and `retranscription.rs`. They now live once in
+  `progress_codes.rs`, modelled on `src/error_codes.rs`: the shared consts keep
+  the `CODE_` prefix so the frontend pinning regex sees them in the new file,
+  and `forward_decode_progress` + `band_percent` + the
+  `detecting_segments_*`/`transcribing_segment_*` message/params builders pin
+  the English fallback prose byte-for-byte (new Rust unit tests assert the
+  exact pre-extraction wire strings). Each file keeps only its own codes
+  (import: creating_folder/copying_file/creating_meeting; retranscription:
+  saving_transcripts). Wire values are unchanged;
+  `tests/lib/native-progress-i18n.test.ts` now extracts the consts from all
+  three files and checks the shared set against BOTH namespaces.

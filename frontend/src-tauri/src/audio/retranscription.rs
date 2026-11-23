@@ -4,6 +4,14 @@ use super::common::{
     create_transcript_segments, find_audio_file, split_segment_at_silence, write_transcripts_json,
     BatchEngine,
 };
+use super::progress_codes::{
+    band_percent, detecting_segments_message, detecting_segments_params,
+    transcribing_segment_message, transcribing_segment_params, CODE_COMPLETE,
+    CODE_CONVERTING_FORMAT, CODE_DECODING_FILE, CODE_DETECTING_SEGMENTS,
+    CODE_DETECTING_SEGMENTS_PROGRESS, CODE_LOADING_ENGINE, CODE_TRANSCRIBING_SEGMENT,
+    CODE_WRITING_FILES, MESSAGE_CONVERTING_FORMAT, MESSAGE_DECODING_FILE,
+    MESSAGE_DETECTING_SEGMENTS, MESSAGE_LOADING_ENGINE, MESSAGE_WRITING_FILES,
+};
 use super::progress_scale::{
     transcription_progress, DIARIZATION_BAND_START, SAVING_PROGRESS, TRANSCRIPTION_BAND,
 };
@@ -82,17 +90,10 @@ pub struct RetranscriptionProgress {
 /// Codes for the `retranscription-progress` payload (native-i18n spec D7).
 /// The value is the frontend catalog key suffix
 /// (`retranscribe.progress.<code>`); the frontend pinning test extracts these
-/// constants and fails if a catalog key goes missing in either locale.
-const CODE_DECODING_FILE: &str = "decoding_file";
-const CODE_CONVERTING_FORMAT: &str = "converting_format";
-const CODE_DETECTING_SEGMENTS: &str = "detecting_segments";
-const CODE_DETECTING_SEGMENTS_PROGRESS: &str = "detecting_segments_progress";
-const CODE_LOADING_ENGINE: &str = "loading_engine";
-const CODE_TRANSCRIBING_SEGMENT: &str = "transcribing_segment";
+/// constants and fails if a catalog key goes missing in either locale. The
+/// codes both batch paths share live in `super::progress_codes`; only the
+/// retranscription-only codes are defined here.
 const CODE_SAVING_TRANSCRIPTS: &str = "saving_transcripts";
-const CODE_WRITING_FILES: &str = "writing_files";
-/// Reuses the existing `retranscribe.stages.complete` key on the frontend.
-const CODE_COMPLETE: &str = "complete";
 
 /// Result of retranscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,7 +206,7 @@ async fn run_retranscription<R: Runtime>(
         &meeting_id,
         "decoding",
         5,
-        "Decoding audio file...",
+        MESSAGE_DECODING_FILE,
         CODE_DECODING_FILE,
         None,
     );
@@ -232,7 +233,7 @@ async fn run_retranscription<R: Runtime>(
         &meeting_id,
         "decoding",
         15,
-        "Converting audio format...",
+        MESSAGE_CONVERTING_FORMAT,
         CODE_CONVERTING_FORMAT,
         None,
     );
@@ -256,7 +257,7 @@ async fn run_retranscription<R: Runtime>(
         &meeting_id,
         "vad",
         20,
-        "Detecting speech segments...",
+        MESSAGE_DETECTING_SEGMENTS,
         CODE_DETECTING_SEGMENTS,
         None,
     );
@@ -281,21 +282,14 @@ async fn run_retranscription<R: Runtime>(
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {
                 // Map VAD progress (0-100) to overall progress (20-25)
-                let overall_progress = 20 + (vad_progress as f32 * 0.05) as u32;
                 emit_progress(
                     &app_for_vad,
                     &meeting_id_for_vad,
                     "vad",
-                    overall_progress,
-                    &format!(
-                        "Detecting speech segments... {}% ({} found)",
-                        vad_progress, segments_found
-                    ),
+                    band_percent(20, vad_progress),
+                    &detecting_segments_message(vad_progress, segments_found),
                     CODE_DETECTING_SEGMENTS_PROGRESS,
-                    Some(serde_json::json!({
-                        "percent": vad_progress,
-                        "found": segments_found,
-                    })),
+                    Some(detecting_segments_params(vad_progress, segments_found)),
                 );
 
                 // Return false to cancel if cancellation requested
@@ -360,7 +354,7 @@ async fn run_retranscription<R: Runtime>(
         &meeting_id,
         "transcribing",
         TRANSCRIPTION_BAND.0,
-        "Loading transcription engine...",
+        MESSAGE_LOADING_ENGINE,
         CODE_LOADING_ENGINE,
         None,
     );
@@ -430,18 +424,9 @@ async fn run_retranscription<R: Runtime>(
             &meeting_id,
             "transcribing",
             progress,
-            &format!(
-                "Transcribing segment {} of {} ({:.1}s)...",
-                i + 1,
-                processable_count,
-                segment_duration_sec
-            ),
+            &transcribing_segment_message(i, processable_count, segment_duration_sec),
             CODE_TRANSCRIBING_SEGMENT,
-            Some(serde_json::json!({
-                "current": i + 1,
-                "total": processable_count,
-                "duration_sec": segment_duration_sec,
-            })),
+            Some(transcribing_segment_params(i, processable_count, segment_duration_sec)),
         );
 
         // Skip very short segments (< 100ms of audio = 1600 samples at 16kHz)
@@ -611,7 +596,7 @@ async fn run_retranscription<R: Runtime>(
         &meeting_id,
         "saving",
         DIARIZATION_BAND_START,
-        "Writing transcript files...",
+        MESSAGE_WRITING_FILES,
         CODE_WRITING_FILES,
         None,
     );

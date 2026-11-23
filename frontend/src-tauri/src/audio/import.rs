@@ -19,6 +19,14 @@ use super::common::{
     create_transcript_segments, split_segment_at_silence, write_transcripts_json, BatchEngine,
 };
 use super::constants::AUDIO_EXTENSIONS;
+use super::progress_codes::{
+    band_percent, detecting_segments_message, detecting_segments_params, forward_decode_progress,
+    transcribing_segment_message, transcribing_segment_params, CODE_COMPLETE,
+    CODE_CONVERTING_FORMAT, CODE_DECODING_FILE, CODE_DETECTING_SEGMENTS,
+    CODE_DETECTING_SEGMENTS_PROGRESS, CODE_LOADING_ENGINE, CODE_TRANSCRIBING_SEGMENT,
+    CODE_WRITING_FILES, MESSAGE_CONVERTING_FORMAT, MESSAGE_DECODING_FILE,
+    MESSAGE_DETECTING_SEGMENTS, MESSAGE_LOADING_ENGINE, MESSAGE_WRITING_FILES,
+};
 use super::progress_scale::{transcription_progress, DIARIZATION_BAND_START, SAVING_PROGRESS};
 use super::recording_preferences::get_default_recordings_folder;
 use super::transcription::diarization_run;
@@ -99,19 +107,11 @@ pub struct ImportProgress {
 /// Codes for the `import-progress` payload (native-i18n spec D7). The value
 /// is the frontend catalog key suffix (`importAudio.progress.<code>`); the
 /// frontend pinning test extracts these constants and fails if a catalog key
-/// goes missing in either locale.
+/// goes missing in either locale. The codes both batch paths share live in
+/// `super::progress_codes`; only the import-only codes are defined here.
 const CODE_CREATING_FOLDER: &str = "creating_folder";
 const CODE_COPYING_FILE: &str = "copying_file";
-const CODE_DECODING_FILE: &str = "decoding_file";
-const CODE_CONVERTING_FORMAT: &str = "converting_format";
-const CODE_DETECTING_SEGMENTS: &str = "detecting_segments";
-const CODE_DETECTING_SEGMENTS_PROGRESS: &str = "detecting_segments_progress";
-const CODE_LOADING_ENGINE: &str = "loading_engine";
-const CODE_TRANSCRIBING_SEGMENT: &str = "transcribing_segment";
 const CODE_CREATING_MEETING: &str = "creating_meeting";
-const CODE_WRITING_FILES: &str = "writing_files";
-/// Reuses the existing `importAudio.stages.complete` key on the frontend.
-const CODE_COMPLETE: &str = "complete";
 
 /// Result of import
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -401,7 +401,7 @@ async fn run_import<R: Runtime>(
         &app,
         "decoding",
         15,
-        "Decoding audio file...",
+        MESSAGE_DECODING_FILE,
         CODE_DECODING_FILE,
         None,
     );
@@ -409,18 +409,18 @@ async fn run_import<R: Runtime>(
     // Decode the audio file with progress updates. The decoder reports a
     // coded progress struct (native-i18n spec D7); import forwards it under
     // its own overall percentage.
-    let app_for_decode = app.clone();
-    let decode_progress = Box::new(move |progress: &crate::audio::decoder::DecodeProgress| {
-        // Map decode progress: 15% + (progress * 0.05) to go from 15% to 20%
-        let overall_progress = 15 + ((progress.percent as f32 * 0.05) as u32);
-        emit_progress(
-            &app_for_decode,
-            "decoding",
-            overall_progress,
-            &progress.message,
-            progress.code,
-            progress.params.clone(),
-        );
+    let decode_progress = forward_decode_progress(15, {
+        let app_for_decode = app.clone();
+        move |overall_progress, message, code, params| {
+            emit_progress(
+                &app_for_decode,
+                "decoding",
+                overall_progress,
+                message,
+                code,
+                params,
+            )
+        }
     });
 
     let path_for_decode = dest_path.clone();
@@ -440,7 +440,7 @@ async fn run_import<R: Runtime>(
         &app,
         "resampling",
         20,
-        "Converting audio format...",
+        MESSAGE_CONVERTING_FORMAT,
         CODE_CONVERTING_FORMAT,
         None,
     );
@@ -454,18 +454,18 @@ async fn run_import<R: Runtime>(
     // Convert to 16kHz mono format with progress updates. The resampler
     // reports a coded progress struct (native-i18n spec D7); import forwards
     // it under its own overall percentage.
-    let app_for_resample = app.clone();
-    let resample_progress = Box::new(move |progress: &crate::audio::decoder::DecodeProgress| {
-        // Map resample progress: 20% + (progress * 0.05) to go from 20% to 25%
-        let overall_progress = 20 + ((progress.percent as f32 * 0.05) as u32);
-        emit_progress(
-            &app_for_resample,
-            "resampling",
-            overall_progress,
-            &progress.message,
-            progress.code,
-            progress.params.clone(),
-        );
+    let resample_progress = forward_decode_progress(20, {
+        let app_for_resample = app.clone();
+        move |overall_progress, message, code, params| {
+            emit_progress(
+                &app_for_resample,
+                "resampling",
+                overall_progress,
+                message,
+                code,
+                params,
+            )
+        }
     });
 
     let audio_samples = tokio::task::spawn_blocking(move || {
@@ -482,7 +482,7 @@ async fn run_import<R: Runtime>(
         &app,
         "vad",
         25,
-        "Detecting speech segments...",
+        MESSAGE_DETECTING_SEGMENTS,
         CODE_DETECTING_SEGMENTS,
         None,
     );
@@ -505,20 +505,13 @@ async fn run_import<R: Runtime>(
             &audio_samples,
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {
-                let overall_progress = 25 + (vad_progress as f32 * 0.05) as u32;
                 emit_progress(
                     &app_for_vad,
                     "vad",
-                    overall_progress,
-                    &format!(
-                        "Detecting speech segments... {}% ({} found)",
-                        vad_progress, segments_found
-                    ),
+                    band_percent(25, vad_progress),
+                    &detecting_segments_message(vad_progress, segments_found),
                     CODE_DETECTING_SEGMENTS_PROGRESS,
-                    Some(serde_json::json!({
-                        "percent": vad_progress,
-                        "found": segments_found,
-                    })),
+                    Some(detecting_segments_params(vad_progress, segments_found)),
                 );
                 !IMPORT_CANCELLED.load(Ordering::SeqCst)
             },
@@ -586,7 +579,7 @@ async fn run_import<R: Runtime>(
         &app,
         "transcribing",
         30,
-        "Loading transcription engine...",
+        MESSAGE_LOADING_ENGINE,
         CODE_LOADING_ENGINE,
         None,
     );
@@ -656,18 +649,9 @@ async fn run_import<R: Runtime>(
             &app,
             "transcribing",
             progress,
-            &format!(
-                "Transcribing segment {} of {} ({:.1}s)...",
-                i + 1,
-                processable_count,
-                segment_duration_sec
-            ),
+            &transcribing_segment_message(i, processable_count, segment_duration_sec),
             CODE_TRANSCRIBING_SEGMENT,
-            Some(serde_json::json!({
-                "current": i + 1,
-                "total": processable_count,
-                "duration_sec": segment_duration_sec,
-            })),
+            Some(transcribing_segment_params(i, processable_count, segment_duration_sec)),
         );
 
         // Skip very short segments
@@ -797,7 +781,7 @@ async fn run_import<R: Runtime>(
         &app,
         "saving",
         DIARIZATION_BAND_START,
-        "Writing transcript files...",
+        MESSAGE_WRITING_FILES,
         CODE_WRITING_FILES,
         None,
     );
