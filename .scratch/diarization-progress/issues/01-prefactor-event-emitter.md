@@ -4,8 +4,15 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** done
+**Status:** resolved
 
 - [x] Цепочка прохода диаризации (планировщик → сервис → загрузка/инференс движка) принимает эмиттер событий; все вызывающие стороны (импорт, ретранскрипция, ручная команда) обновлены
 - [x] Ни одного нового события; существующие события диаризации и их payload не изменились
 - [x] Существующие Rust-тесты модулей прохода диаризации проходят; эмиссия не блокирует async-таски и аудио-коллбэки
+
+## Comments
+
+- Ветка: `feat/dp-01` (`788f370`, `897c215`), влита merge-коммитом в `feat/diarization-progress`.
+- `diarize_recording_folder_with_model` / `run_and_overlay` / `run_diarization` приняли `&AppHandle<R>`; сама эмиссия ещё не идёт (задел под тикет 02). Терминальные события закреплены новыми тестами на `listen_any`-моке: молчание при `no_model` и ровно один `diarization-unavailable` с контрактным payload при `failed`.
+- Проверка: `cargo test -p samobranka --lib` — 733 pass / 0 fail / 7 ignored (worktree `dp-01`); `cargo test --lib diarization` — 53 pass. Фронтенд не менялся.
+- Не проверено: живой прогон в Tauri-приложении (prefactor без видимого поведения; покрывается тикетом 08).
