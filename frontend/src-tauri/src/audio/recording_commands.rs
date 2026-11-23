@@ -508,13 +508,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     info!("✅ Transcription model validation passed");
 
     // Notify frontend that startup has begun (surfaces STARTING state)
-    app.emit(
-        "recording-starting",
-        serde_json::json!({
-            "message": "Recording initialization started"
-        }),
-    )
-    .map_err(|e| e.to_string())?;
+    app.emit("recording-starting", serde_json::json!({}))
+        .map_err(|e| e.to_string())?;
 
     // Load recording preferences to get auto_save AND device preferences
     let (auto_save, preferred_mic_name, preferred_system_name) =
@@ -688,7 +683,6 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     app.emit(
         "recording-started",
         serde_json::json!({
-            "message": "Recording started successfully with parallel processing",
             "devices": ["Default Microphone", "Default System Audio"],
             "workers": 3
         }),
@@ -763,13 +757,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     info!("✅ Transcription model validation passed");
 
     // Notify frontend that startup has begun (surfaces STARTING state)
-    app.emit(
-        "recording-starting",
-        serde_json::json!({
-            "message": "Recording initialization started"
-        }),
-    )
-    .map_err(|e| e.to_string())?;
+    app.emit("recording-starting", serde_json::json!({}))
+        .map_err(|e| e.to_string())?;
 
     let prefs = super::recording_preferences::load_recording_preferences(&app)
         .await
@@ -933,7 +922,6 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     app.emit(
         "recording-started",
         serde_json::json!({
-            "message": "Recording started with custom devices and parallel processing",
             "devices": [
                 mic_device_name.unwrap_or_else(|| "Default Microphone".to_string()),
                 system_device_name.unwrap_or_else(|| "Default System Audio".to_string())
@@ -997,7 +985,6 @@ async fn stop_recording_for_session<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "stopping_audio",
-            "message": "Stopping audio capture...",
             "progress": 20
         }),
     );
@@ -1045,7 +1032,6 @@ async fn stop_recording_for_session<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "processing_transcripts",
-            "message": "Processing remaining transcript chunks...",
             "progress": 40
         }),
     );
@@ -1073,7 +1059,6 @@ async fn stop_recording_for_session<R: Runtime>(
                     "recording-shutdown-progress",
                     serde_json::json!({
                         "stage": "processing_transcripts",
-                        "message": format!("Processing transcripts... ({}s elapsed)", elapsed),
                         "progress": 40,
                         "detailed": true,
                         "elapsed_seconds": elapsed
@@ -1113,7 +1098,6 @@ async fn stop_recording_for_session<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "unloading_model",
-            "message": "Unloading speech recognition model...",
             "progress": 70
         }),
     );
@@ -1187,7 +1171,6 @@ async fn stop_recording_for_session<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "finalizing",
-            "message": "Finalizing recording and cleaning up resources...",
             "progress": 90
         }),
     );
@@ -1252,7 +1235,6 @@ async fn stop_recording_for_session<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "complete",
-            "message": "Recording stopped successfully",
             "progress": 100
         }),
     );
@@ -1261,7 +1243,6 @@ async fn stop_recording_for_session<R: Runtime>(
     app.emit(
         "recording-stopped",
         serde_json::json!({
-            "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
             "meeting_name": meeting_name_str
         }),
@@ -1305,13 +1286,8 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
         manager.pause_recording().map_err(|e| e.to_string())?;
 
         // Emit pause event to frontend
-        app.emit(
-            "recording-paused",
-            serde_json::json!({
-                "message": "Recording paused"
-            }),
-        )
-        .map_err(|e| e.to_string())?;
+        app.emit("recording-paused", serde_json::json!({}))
+            .map_err(|e| e.to_string())?;
 
         // Update tray menu to reflect paused state
         crate::tray::update_tray_menu(&app);
@@ -1339,13 +1315,8 @@ pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), Strin
         manager.resume_recording().map_err(|e| e.to_string())?;
 
         // Emit resume event to frontend
-        app.emit(
-            "recording-resumed",
-            serde_json::json!({
-                "message": "Recording resumed"
-            }),
-        )
-        .map_err(|e| e.to_string())?;
+        app.emit("recording-resumed", serde_json::json!({}))
+            .map_err(|e| e.to_string())?;
 
         // Update tray menu to reflect resumed state
         crate::tray::update_tray_menu(&app);

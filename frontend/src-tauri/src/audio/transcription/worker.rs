@@ -254,12 +254,7 @@ pub fn start_transcription_task<R: Runtime>(
                                         )
                                         .is_ok()
                                         && app_clone
-                                            .emit(
-                                                "speech-detected",
-                                                serde_json::json!({
-                                                    "message": "Speech activity detected"
-                                                }),
-                                            )
+                                            .emit("speech-detected", serde_json::json!({}))
                                             .is_err()
                                     {
                                         stats.record_failure(WorkerFailureCategory::SpeechDetectedEmit);
@@ -329,8 +324,7 @@ pub fn start_transcription_task<R: Runtime>(
                         "worker_id": worker_id,
                         "chunks_completed": completed,
                         "chunks_queued": queued,
-                        "progress_percentage": progress_percentage,
-                        "message": format!("Worker {} processing... ({}/{})", worker_id, completed, queued)
+                        "progress_percentage": progress_percentage
                     }));
 
                     if last_summary.elapsed() >= Duration::from_secs(60) {
@@ -355,8 +349,7 @@ pub fn start_transcription_task<R: Runtime>(
 
         let total_chunks_queued = chunks_queued.load(Ordering::SeqCst);
         let _ = app.emit("transcription-queue-complete", serde_json::json!({
-            "total_chunks": total_chunks_queued,
-            "message": format!("{} chunks queued for processing - waiting for completion", total_chunks_queued)
+            "total_chunks": total_chunks_queued
         }));
 
         for handle in worker_handles {
@@ -385,8 +378,7 @@ pub fn start_transcription_task<R: Runtime>(
                 serde_json::json!({
                     "chunks_queued": final_queued,
                     "chunks_completed": final_completed,
-                    "chunks_lost": final_queued - final_completed,
-                    "message": "Some transcript chunks may have been lost during shutdown"
+                    "chunks_lost": final_queued - final_completed
                 }),
             );
         }
