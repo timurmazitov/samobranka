@@ -22,6 +22,7 @@ import {
   DIARIZATION_PROGRESS_EVENT,
   DIARIZATION_STAGES,
   DIARIZATION_UNAVAILABLE_HINT,
+  DIARIZATION_BAND_START,
   SPEAKER_NAMES_RESET_EVENT,
   SPEAKER_NAMES_RESET_HINT,
   TRANSCRIPT_UPDATED_EVENT,
@@ -275,6 +276,7 @@ describe('mirrored native texts', () => {
         nativeConstant('DIARIZATION_RUNTIME_UNAVAILABLE_MESSAGE'),
       ],
       [DIARIZATION_FAILED_MESSAGE, nativeConstant('DIARIZATION_FAILED_MESSAGE')],
+      [DIARIZATION_DEFERRED_MESSAGE, nativeConstant('DIARIZATION_DEFERRED_MESSAGE')],
       [SPEAKER_NAMES_RESET_HINT, nativeConstant('SPEAKER_NAMES_RESET_MESSAGE')],
     ];
 
@@ -296,6 +298,21 @@ describe('mirrored native texts', () => {
     expect(TRANSCRIPT_UPDATED_EVENT).toBe(nativeConstant('TRANSCRIPT_UPDATED_EVENT'));
     expect(SPEAKER_NAMES_RESET_EVENT).toBe(nativeConstant('SPEAKER_NAMES_RESET_EVENT'));
     expect(DIARIZATION_PROGRESS_EVENT).toBe(nativeConstant('DIARIZATION_PROGRESS_EVENT'));
+  });
+
+  test('the diarization band start mirrors the native bar scale', () => {
+    // The native milestones of both batch paths stop at
+    // `audio/progress_scale.rs`'s DIARIZATION_BAND_START, and the frontend
+    // band (the bar's start of the pass state's slice, and the synthetic
+    // `diarizing` progress both dialogs post on save) must read the same
+    // number, or the bar jumps or stalls at the handover.
+    const scaleSource = readFileSync(
+      new URL('../../src-tauri/src/audio/progress_scale.rs', import.meta.url),
+      'utf8',
+    );
+    const match = /const DIARIZATION_BAND_START: u32 = (\d+);/.exec(scaleSource);
+    if (!match) throw new Error('no DIARIZATION_BAND_START in progress_scale.rs');
+    expect(DIARIZATION_BAND_START).toBe(Number(match[1]));
   });
 
   test('the frontend stage union mirrors the native stage enum', () => {

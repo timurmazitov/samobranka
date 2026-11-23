@@ -16,6 +16,7 @@
 
 import {
   hasInstalledDiarizationModel,
+  diarizationBarValue,
   type DiarizationPassState,
 } from './diarization';
 import type {
@@ -106,20 +107,20 @@ export const defaultDiarizationAvailabilityClient: DiarizationAvailabilityClient
 };
 
 /**
- * Where a pass percentage belongs on the import bar. Diarization owns
- * 75..100 of the scale (see `import.rs`): an honest pass percentage maps
- * into that band (0 → 75, 100 → 100), an indeterminate stage sits at the
- * band's start, and without any pass the bar keeps the transcription value.
+ * Where a pass percentage belongs on the import bar. The native milestones
+ * bring the bar to `DIARIZATION_BAND_START` (the same constant `import.rs`
+ * stops at); from there the shared pass state projects through the band —
+ * each stage owns a slice of 75..99 in emission order and its honest
+ * percentage interpolates only inside its own slice, so the bar keeps moving
+ * forward and never reads 100 before its terminal (the dialog switches to
+ * 100 only when the pass state is gone). Without any pass the bar keeps the
+ * transcription value.
  */
 export function importBarPercentage(
   progressPercentage: number | null | undefined,
   pass: DiarizationPassState | null,
 ): number {
-  if (pass) {
-    const within =
-      pass.progressPercentage === null ? 0 : Math.round(pass.progressPercentage / 4);
-    return Math.min(75 + within, 100);
-  }
+  if (pass) return diarizationBarValue(pass);
   return progressPercentage === undefined || progressPercentage === null
     ? 0
     : Math.min(progressPercentage, 100);

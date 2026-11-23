@@ -416,6 +416,69 @@ describe('DiarizationPassStore', () => {
     expect(registered.has('diarization-progress')).toBe(true);
   });
 
+  test('a later subscriber retries the bridge while earlier ones still wait', async () => {
+    // The recovery does not need an unrelated 0→1 cycle: a subscriber that
+    // arrives while the store listens to nothing retries the attach, so the
+    // surfaces already waiting (a panel mounted before the bridge was ready)
+    // start seeing events as soon as any new surface subscribes.
+    let attempts = 0;
+    const registered = new Map<string, (event: { payload: unknown }) => void>();
+    const listen = async (
+      name: string,
+      handler: (event: { payload: never }) => void,
+    ) => {
+      attempts += 1;
+      // The first start's very first listen fails; every later listen (from
+      // a retry) lands, because a registration aborts at its first failure.
+      if (attempts === 1) throw new Error('bridge not ready');
+      registered.set(name, handler as never);
+      return () => registered.delete(name);
+    };
+    const store = new DiarizationPassStore(listen as never);
+    const early = store.subscribe();
+    await store.settled();
+    expect(store.isListening()).toBe(false);
+
+    const late = store.subscribe();
+    await store.settled();
+    expect(store.isListening()).toBe(true);
+    expect(registered.has('diarization-progress')).toBe(true);
+
+    registered.get('diarization-progress')?.({
+      payload: { meeting_id: 'meeting-a', stage: 'queued' },
+    });
+    expect(store.getState('meeting-a')?.stage).toBe('queued');
+    early();
+    late();
+    store.dispose();
+  });
+
+  test('markPassStarted marks the pass running before its first stage lands', async () => {
+    // The manual run's click is the panel's running truth: without this the
+    // button would stay clickable until the first `diarization-progress`
+    // event, and a second click would queue a second pass.
+    const bridge = harness();
+    const store = new DiarizationPassStore(bridge.listen as never);
+    const seen: Array<string | null> = [];
+    store.subscribe(() => seen.push(store.getState('meeting-a')?.phase ?? null));
+    await store.settled();
+
+    store.markPassStarted('meeting-a');
+    expect(store.getState('meeting-a')).toMatchObject({
+      meetingId: 'meeting-a',
+      phase: 'running',
+      stage: null,
+      progressPercentage: null,
+    });
+    expect(seen).toEqual(['running']);
+
+    // A terminal ends it like any other pass: the manual run's completion or
+    // the native terminal, not a panel-local flag.
+    emit(bridge, 'transcript-updated', { meeting_id: 'meeting-a' });
+    expect(store.getState('meeting-a')).toBeNull();
+    store.dispose();
+  });
+
   test('a subscribe/unsubscribe race mid-registration leaves no orphan listener', async () => {
     // React StrictMode mounts, unmounts and remounts; an unsubscribe that
     // lands while the bridge is still registering must not leave the

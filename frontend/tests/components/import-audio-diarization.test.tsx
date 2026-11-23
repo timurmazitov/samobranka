@@ -335,6 +335,9 @@ test('the bar keeps 75 and the diarization sentence after the save, and waits fo
   expect(toastSuccess).not.toHaveBeenCalled();
 
   // The shared pass state drives the stage caption and the honest number.
+  // The committed model-load checkpoint reads honestly inside the band: it
+  // tops its own stage slice (89) and never reaches 100 mid-pass; the
+  // terminal alone releases 100.
   await emitStore(harness, 'diarization-progress', {
     meeting_id: 'meeting-imported',
     stage: 'loading_model',
@@ -342,7 +345,7 @@ test('the bar keeps 75 and the diarization sentence after the save, and waits fo
     message: 'Loading the diarization model...',
   });
   expect(renderedText()).toContain('Loading the model');
-  expect(renderedText()).toContain('100%');
+  expect(renderedText()).toContain('89%');
 
   // The terminal releases "Done" and the complete toast.
   await emitStore(harness, 'transcript-updated', {
