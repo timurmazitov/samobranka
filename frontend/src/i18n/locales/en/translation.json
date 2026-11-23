@@ -913,6 +913,13 @@
     "runTooltip": "Run speaker diarization for this meeting",
     "run": "Run diarization",
     "running": "Running diarization…",
+    "stages": {
+      "queued": "Waiting for the queue",
+      "loading_model": "Loading the model…",
+      "decoding": "Analyzing the audio…",
+      "inferring": "Detecting speakers…",
+      "applying_labels": "Updating speakers…"
+    },
     "catalogWarning": "Could not read the diarization model list. A run will report the real status.",
     "segmentCount_one": "{{count}} segment",
     "segmentCount_other": "{{count}} segments",

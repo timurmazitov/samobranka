@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, ChevronsUpDown, Loader2, Sparkles, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,13 +24,16 @@ import {
 import {
   DIARIZATION_NO_SPEAKERS_FOUND_MESSAGE,
   DIARIZATION_UNAVAILABLE_HINT,
+  diarizationStageMessage,
   diarizationStatusMessage,
   hasInstalledDiarizationModel,
   type DiarizationClient,
+  type DiarizationPassStore,
 } from '@/lib/diarization';
 import type { AudioCppModelClient } from '@/lib/audiocpp';
 import { audioCppClient } from '@/lib/audiocppClient';
 import { diarizationClient as defaultDiarizationClient } from '@/lib/diarizationClient';
+import { diarizationPassStore as defaultPassStore } from '@/lib/diarizationPassStore';
 import { comparePersonNames, foldPersonName, personNameKey } from '@/lib/person-sort';
 import { formatSpeakerDisplayLabel } from '@/lib/transcript-format';
 import type { MeetingSpeaker, SpeakerAssignment } from '@/types';
@@ -202,6 +205,13 @@ interface SpeakersPanelProps {
   diarizationClient?: DiarizationClient;
   /** Model catalog seam: decides whether the manual run button is enabled. */
   modelClient?: Pick<AudioCppModelClient, 'getAvailableModels'>;
+  /**
+   * Shared diarization pass state seam. Production reads the singleton so an
+   * automatic pass (import, retranscription, live stop) shows here even when
+   * it was not started from this panel; tests inject a fake driven by
+   * `diarization-progress` events.
+   */
+  passStore?: DiarizationPassStore;
 }
 
 /**
@@ -220,6 +230,7 @@ export function SpeakersPanel({
   onRefetchTranscripts,
   diarizationClient = defaultDiarizationClient,
   modelClient = audioCppClient,
+  passStore = defaultPassStore,
 }: SpeakersPanelProps) {
   const { t } = useTranslation();
   const [speakers, setSpeakers] = useState<MeetingSpeaker[]>([]);
@@ -242,6 +253,22 @@ export function SpeakersPanel({
   const [diarizationReason, setDiarizationReason] = useState<string | null>(null);
   // Guards against a second click landing before the disabled state renders.
   const diarizingRef = useRef(false);
+
+  /**
+   * The shared pass state for this meeting. The panel reads the seam store —
+   * not only its own `isDiarizing` — so an automatic pass (import,
+   * retranscription, live stop) is visible here too and the manual-run button
+   * stays disabled while any pass runs, however it was started.
+   */
+  const subscribePass = useCallback(
+    (onChange: () => void) => passStore.subscribe(onChange),
+    [passStore],
+  );
+  const readPass = useCallback(
+    () => (meetingId ? passStore.getState(meetingId) : null),
+    [passStore, meetingId],
+  );
+  const passState = useSyncExternalStore(subscribePass, readPass, () => null);
 
   const loadSpeakers = useCallback(async () => {
     if (!meetingId) return;
@@ -336,7 +363,10 @@ export function SpeakersPanel({
       !meetingId ||
       isDiarizing ||
       hasDiarizationModel === false ||
-      diarizingRef.current
+      diarizingRef.current ||
+      // A pass is already running for this meeting — started automatically
+      // or from elsewhere; the panel must not queue a second one.
+      passState !== null
     ) {
       return;
     }
@@ -375,6 +405,11 @@ export function SpeakersPanel({
     } finally {
       diarizingRef.current = false;
       setIsDiarizing(false);
+      // The command resolved; whatever stages the pass announced are over
+      // now. Clearing the shared state keeps the indicator honest even if a
+      // terminal event raced past this listener, so a finished manual run
+      // cannot leave a stale stage on screen.
+      if (meetingId) passStore.clear(meetingId);
     }
   };
 
@@ -522,6 +557,20 @@ export function SpeakersPanel({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto">
+          {passState && (
+            <div
+              data-testid="diarization-pass-indicator"
+              className="flex items-center justify-center gap-2 py-3 text-sm text-muted-foreground"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>
+                {diarizationStageMessage(passState.stage)}
+                {passState.progressPercentage !== null
+                  ? ` ${passState.progressPercentage}%`
+                  : ''}
+              </span>
+            </div>
+          )}
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -537,7 +586,7 @@ export function SpeakersPanel({
                   size="sm"
                   data-testid="diarize-meeting-button"
                   onClick={handleDiarize}
-                  disabled={isDiarizing || hasDiarizationModel === false}
+                  disabled={isDiarizing || hasDiarizationModel === false || passState !== null}
                   title={
                     hasDiarizationModel === false
                       ? DIARIZATION_UNAVAILABLE_HINT

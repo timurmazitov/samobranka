@@ -19,6 +19,8 @@ import {
   DIARIZATION_FAILED_MESSAGE,
   DIARIZATION_NO_MODEL_MESSAGE,
   DIARIZATION_NO_RUNTIME_MESSAGE,
+  DIARIZATION_PROGRESS_EVENT,
+  DIARIZATION_STAGES,
   DIARIZATION_UNAVAILABLE_HINT,
   SPEAKER_NAMES_RESET_EVENT,
   SPEAKER_NAMES_RESET_HINT,
@@ -293,6 +295,23 @@ describe('mirrored native texts', () => {
   test('name the native event constants', () => {
     expect(TRANSCRIPT_UPDATED_EVENT).toBe(nativeConstant('TRANSCRIPT_UPDATED_EVENT'));
     expect(SPEAKER_NAMES_RESET_EVENT).toBe(nativeConstant('SPEAKER_NAMES_RESET_EVENT'));
+    expect(DIARIZATION_PROGRESS_EVENT).toBe(nativeConstant('DIARIZATION_PROGRESS_EVENT'));
+  });
+
+  test('the frontend stage union mirrors the native stage enum', () => {
+    // The stage names are the payload contract: the panel maps every member
+    // to a catalog string, so a native stage the frontend does not know
+    // would silently drop its indicator. Read the variants of the native
+    // `DiarizationStage` enum and compare the snake_case spelling.
+    const source = readFileSync(NATIVE_SOURCE, 'utf8');
+    const match = /pub enum DiarizationStage \{([\s\S]*?)\n\}/.exec(source);
+    if (!match) throw new Error('no DiarizationStage enum in the native source');
+    const nativeStages: string[] = [...match[1].matchAll(/^\s{4}([A-Z][A-Za-z]*),$/gm)].map(
+      ([, variant]) =>
+        (variant as string).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase(),
+    );
+
+    expect([...DIARIZATION_STAGES] as string[]).toEqual(nativeStages);
   });
 });
 

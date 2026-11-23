@@ -540,7 +540,9 @@ pub async fn diarize_saved_meeting<R: Runtime>(
 mod tests {
     use super::*;
     use crate::audio::common::BatchEngine;
-    use crate::audio::transcription::diarization_service::DiarizationStatus;
+    use crate::audio::transcription::diarization_service::{
+        DiarizationStatus, DIARIZATION_PROGRESS_EVENT,
+    };
     use std::sync::Mutex;
 
     fn result(status: DiarizationStatus, labeled: usize, total: usize) -> SavedMeetingDiarization {
@@ -1083,10 +1085,12 @@ mod tests {
         assert_eq!(result.total_segments, 2);
     }
 
-    /// Records every emit of the three known terminal events, the way the
-    /// frontend listeners see them. The mock runtime's `Event` carries no
-    /// name, so each contract event gets its own listener; an emit under any
-    /// other name simply does not reach them.
+    /// Records every emit of the known pass-channel events — the three
+    /// terminals plus `diarization-progress` — the way the frontend listeners
+    /// see them. The mock runtime's `Event` carries no name, so each contract
+    /// event gets its own listener; an emit under any other name simply does
+    /// not reach them. Watching the progress channel here is what pins the
+    /// silence rule: a configuration reason must produce no progress stages.
     struct EmittedEvents {
         /// `(event name, payload)` in arrival order.
         events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
@@ -1100,6 +1104,7 @@ mod tests {
             TRANSCRIPT_UPDATED_EVENT,
             DIARIZATION_UNAVAILABLE_EVENT,
             SPEAKER_NAMES_RESET_EVENT,
+            DIARIZATION_PROGRESS_EVENT,
         ] {
             let collected = events.clone();
             let name = name.to_string();
