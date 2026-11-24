@@ -269,6 +269,25 @@ describe('summary state restored when returning to a meeting', () => {
     });
   });
 
+  // Ticket 05: deleting segments removes DB rows, so the surviving rows are
+  // the only ones the database returns. Regeneration must build the
+  // summarizer input from that read, never from a stale client-side list.
+  test('regeneration sends only the transcript rows still in the database', async () => {
+    transcriptsPage = {
+      transcripts: [
+        { id: '2', text: 'Добрый день.', timestamp: '14:30:29', audio_start_time: 24, speaker: 'speaker_1' },
+      ],
+      total_count: 1,
+    };
+    await show(response({ status: 'completed', data: { markdown: 'Stale summary' } }));
+    startProcess = async () => ({ process_id: 'attempt-b' });
+
+    await act(async () => { await state.handleRegenerateSummary(); });
+
+    const call = invoke.mock.calls.find(([command]) => command === 'api_process_transcript');
+    expect(call?.[1]).toMatchObject({ text: '[00:24] Speaker 2: Добрый день.' });
+  });
+
   test('old in-flight poll cannot stop a resumed poll for the same process', async () => {
     let resolve!: (value: SummaryProcessResponse) => void;
     getSummary = () => new Promise(done => { resolve = done; });
