@@ -18,6 +18,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
 export default function PageContent({
@@ -68,6 +69,10 @@ export default function PageContent({
   // State
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const isRecording = false;
+  // The same shared pass store the speakers panel gates its buttons on: while
+  // a pass runs for this meeting, inline text editing closes too, so the two
+  // surfaces block and unblock together.
+  const isDiarizing = useDiarizationPassRunning(meeting?.id);
   const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
@@ -239,6 +244,7 @@ export default function PageContent({
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
               onTextEdited={handleTranscriptTextEdited}
+              isDiarizing={isDiarizing}
             />
           }
           summary={

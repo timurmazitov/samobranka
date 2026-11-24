@@ -66,6 +66,12 @@ export interface VirtualizedTranscriptViewProps {
      * pagination state. The live panel passes nothing, so rows stay inert.
      */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+    /**
+     * Whether a diarization pass is running for this meeting. The meeting page
+     * reads it from the shared pass store; rows fold it into the edit gate so
+     * an edit cannot race the pass's row reload.
+     */
+    isDiarizing?: boolean;
 }
 
 // Mirrors the Rust `normalize_transcript_text`: whitespace runs (newlines and
@@ -150,6 +156,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // is seeded from the RAW text — never the filler-cleaned display — so
     // saving does not silently drop what the user saw.
     const [isEditing, setIsEditing] = useState(false);
+    // A mirror of isEditing in a ref: a browser fires focusout when the
+    // focused textarea unmounts, and that stale blur handler still closes over
+    // the old draft. The ref — shared by every closure of the open editor —
+    // says whether an editor is actually open right now.
+    const editingRef = useRef(false);
     const [draft, setDraft] = useState('');
     const draftRef = useRef<HTMLTextAreaElement>(null);
 
@@ -165,14 +176,20 @@ const TranscriptSegment = memo(function TranscriptSegment({
     const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
 
     const saveDraft = async () => {
-        if (!onTextEdited) return;
-        const normalized = normalizeTranscriptText(draft);
+        if (!onTextEdited || !editingRef.current) return;
+        // Close the editor for every save path first: Enter, blur and a late
+        // focusout from the unmount all land here, and only the first call —
+        // the one that found the editor open — may save.
+        editingRef.current = false;
         setIsEditing(false);
-        // An empty draft or an unchanged line stores nothing: the backend
-        // rejects empty text, and a no-op Enter must not bump the meeting.
-        if (!normalized || normalized === text) return;
+        const normalized = normalizeTranscriptText(draft);
+        // An unchanged line stores nothing: a no-op Enter must not bump the
+        // meeting. An empty draft does reach the backend, which is the
+        // authority that rejects it, so the user gets the error toast.
+        if (normalized && normalized === text) return;
 
-        setTextOverride(normalized);
+        // Never optimistically blank the row while the backend decides.
+        if (normalized) setTextOverride(normalized);
         try {
             await invoke('api_update_transcript_text', { transcriptId: id, text: normalized });
             await onTextEdited(id, normalized);
@@ -181,6 +198,20 @@ const TranscriptSegment = memo(function TranscriptSegment({
             toast.error(t('transcript.updateTextFailed'), { description: String(error) });
         }
     };
+
+    // A diarization pass that starts mid-edit must not drop the draft: when
+    // the gate closes under an open editor, the draft goes through the same
+    // save path as Enter and the editor closes. The effect only watches the
+    // gate, so the save lands on the single transition into the closed gate
+    // and never loops; an untouched draft closes without a command.
+    useEffect(() => {
+        if (!allowTextEdit && isEditing) {
+            void saveDraft();
+        }
+        // The gate transition is the trigger; draft and callback are read
+        // from the render that flipped it, which is the current draft.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allowTextEdit]);
 
     // Optimistic row state: set as soon as the user picks an item, cleared
     // once the refetched segment arrives (or on failure).
@@ -312,8 +343,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     }
                                 } else if (e.key === 'Escape') {
                                     // Cancel: leave the editor without saving,
-                                    // the stored text was never touched.
+                                    // the stored text was never touched. Closing
+                                    // through editingRef means a focusout fired
+                                    // by the unmount below finds no open editor.
                                     e.preventDefault();
+                                    editingRef.current = false;
                                     setIsEditing(false);
                                 }
                             }}
@@ -330,6 +364,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     onClick={() => {
                                         // Seed from the RAW text, never the cleaned display.
                                         setDraft(text);
+                                        editingRef.current = true;
                                         setIsEditing(true);
                                     }}
                                     className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
@@ -375,8 +410,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     meetingSpeakers,
     onSpeakerChange,
     onTextEdited,
+    isDiarizing = false,
 }) => {
     const { t } = useTranslation();
+    // Text edits close while a diarization pass runs: the pass reloads rows,
+    // and an open editor or a mid-save would race that reload. The boolean is
+    // computed once here so every row takes the same gate in both branches.
+    const allowTextEdit = !isRecording && !isDiarizing;
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -561,7 +601,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
-                                        allowTextEdit={!isRecording}
+                                        allowTextEdit={allowTextEdit}
                                     />
                                 </div>
                             );
@@ -624,7 +664,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
-                                        allowTextEdit={!isRecording}
+                                        allowTextEdit={allowTextEdit}
                                     />
                                 </motion.div>
                             );
