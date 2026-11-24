@@ -1069,7 +1069,8 @@
     "previousMatch": "Previous match",
     "nextMatch": "Next match",
     "caseSensitive": "Match case",
-    "wholeWord": "Whole words"
+    "wholeWord": "Whole words",
+    "openSummaryTooltip": "Find and replace in summary"
   },
   "summary": {
     "stopTooltip": "Stop summary generation",
