@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Check, Trash2 } from "lucide-react";
+import { Check, ListChecks, Trash2, Users } from "lucide-react";
 import { Button } from "./ui/button";
 import { ConfirmationModal } from "./ConfirmationModel/confirmation-modal";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
@@ -118,6 +118,32 @@ export interface VirtualizedTranscriptViewProps {
      * on failure so the bar toasts. Absent on the live panel.
      */
     onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+    /**
+     * «Выделить всё видимое» (ticket 03): the host marks every LOADED row
+     * (or clears when all of them are already marked). Absent on the live
+     * panel, and while the mode's gates are closed.
+     */
+    onSelectAllVisible?: () => void;
+    /**
+     * By-speaker selection (ticket 03): the host marks the loaded segments
+     * carrying this diarization label — never the panel's whole-meeting
+     * `segment_count`, which would lie in «Удалить (N)».
+     */
+    onSelectBySpeaker?: (label: string) => void;
+    /**
+     * Ctrl/Shift-click on a row (ticket 03, file-manager semantics): Ctrl
+     * reuses `onToggleSelected` (the checkbox's path); Shift asks the host
+     * for the range from the last selected row to this one. Plain clicks
+     * never select — the text stays selectable.
+     */
+    onRowRangeSelect?: (transcriptId: string, modifiers: { shift: boolean }) => void;
+    /**
+     * Delete-key seam (ticket 03): the page's single document listener
+     * bumps this nonce instead of owning the confirmation, so the Delete
+     * key presses the very same «Удалить (N)» path (house precedent:
+     * FindReplacePanel's focusNonce). 0 means «no request yet».
+     */
+    bulkDeleteNonce?: number;
 
     // Find & replace (meeting page). `findOpen` is the mode switch: while it
     // is true rows show their raw text and get <mark>s from `findMatches`.
@@ -210,6 +236,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     selectionMode,
     isSelected,
     onToggleSelected,
+    onRowRangeSelect,
     highlights,
     activeMatch,
 }: {
@@ -243,6 +270,15 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isSelected?: boolean;
     /** Flip this row's checkbox; the page owns the id set. Absent on the live panel. */
     onToggleSelected?: (transcriptId: string) => void;
+    /**
+     * Ctrl/Shift-click on the row's text (ticket 03, file-manager): the row
+     * reads the modifiers and routes Ctrl to `onToggleSelected` (the
+     * checkbox's path) and Shift here, for the host's range from the last
+     * selected row. The text <p>'s click handler exists only while the row
+     * is selectable AND this callback is present — without them plain clicks
+     * stay free for ordinary text selection.
+     */
+    onRowRangeSelect?: (transcriptId: string, modifiers: { shift: boolean }) => void;
     /**
      * Find-panel ranges for this row. `undefined` means the panel is closed:
      * the normal filler-cleaned display. An array (possibly empty) means the
@@ -456,6 +492,29 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // toggle (live panel) the mode does not exist.
     const canSelect = selectionMode && allowDelete && !isStreaming && !!onToggleSelected;
 
+    // Ticket 03's file-manager click on the text: the modifier keys only —
+    // a plain click stays free for selecting text. Ctrl routes to the
+    // checkbox path (`onToggleSelected`), Shift to the host's range handler.
+    // The preventDefault keeps Shift-click from dragging a text selection
+    // across the range. The text <p> only gets this handler while the row is
+    // selectable and the host owns a range handler.
+    const handleRowClick = (event: {
+        shiftKey: boolean;
+        ctrlKey: boolean;
+        metaKey: boolean;
+        preventDefault?: () => void;
+    }) => {
+        const shift = event.shiftKey;
+        const ctrl = event.ctrlKey || event.metaKey;
+        if (!shift && !ctrl) return;
+        event.preventDefault?.();
+        if (shift) {
+            onRowRangeSelect?.(id, { shift: true });
+        } else {
+            onToggleSelected?.(id);
+        }
+    };
+
     return (
         <div id={`segment-${id}`} className="mb-3">
             <div className="flex items-start gap-2">
@@ -521,7 +580,10 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         />
                     ) : (
                         <div className="group flex items-start gap-1">
-                            <p className="flex-1 text-base text-gray-800 leading-relaxed">
+                            <p
+                                className="flex-1 text-base text-gray-800 leading-relaxed"
+                                onClick={canSelect && onRowRangeSelect ? handleRowClick : undefined}
+                            >
                                 {highlights && highlights.length > 0
                                     ? renderHighlightedText(displayText, highlights, activeMatch ?? null)
                                     : displayText}
@@ -596,6 +658,10 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     selectedIds,
     onToggleSelected,
     onSegmentsBulkDeleted,
+    onSelectAllVisible,
+    onSelectBySpeaker,
+    onRowRangeSelect,
+    bulkDeleteNonce = 0,
     findOpen = false,
     findMatches,
     findActiveIndex = -1,
@@ -654,6 +720,19 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         }
         setConfirmingBulkDelete(true);
     }, [selection, runBulkDelete]);
+
+    // Delete-key seam (ticket 03): the page's single document listener bumps
+    // `bulkDeleteNonce` instead of owning a second confirmation. The nonce is
+    // the whole request — the same handler the «Удалить (N)» button presses,
+    // so the N>1 confirmation and the privacy-safe failure toast are shared
+    // and can never diverge (FindReplacePanel's focusNonce is the precedent).
+    const lastDeleteNonceRef = useRef(bulkDeleteNonce);
+    useEffect(() => {
+        if (bulkDeleteNonce === lastDeleteNonceRef.current) return;
+        lastDeleteNonceRef.current = bulkDeleteNonce;
+        if (!canBulkDelete || bulkDeleteNonce === 0) return;
+        handleBulkDeletePress();
+    }, [bulkDeleteNonce, canBulkDelete, handleBulkDeletePress]);
 
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -812,6 +891,50 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 Single delete's gates close the whole mode, bar included. */}
             {canBulkDelete && (
                 <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-white pb-2">
+                    {/* Ticket 03's assistants, left of the delete: «выделить
+                        всё видимое» (a re-press over a fully-marked list
+                        clears — the host's toggle) and by-speaker marking
+                        over the LOADED segments (the panel's segment_count
+                        covers the whole meeting and would lie in the
+                        «Удалить (N)» counter). Both share the mode's gates:
+                        without a host callback (live panel) they never
+                        appear. */}
+                    {onSelectAllVisible && (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={onSelectAllVisible}
+                            title={t('transcript.selectAllVisibleTooltip')}
+                        >
+                            <ListChecks size={16} />
+                            {t('transcript.selectAllVisible')}
+                        </Button>
+                    )}
+                    {onSelectBySpeaker && (meetingSpeakers?.length ?? 0) > 0 && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    title={t('transcript.selectBySpeakerTooltip')}
+                                    aria-label={t('transcript.selectBySpeakerTooltip')}
+                                >
+                                    <Users size={16} />
+                                    {t('transcript.selectBySpeaker')}
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                {dropdownSpeakers?.map(item => (
+                                    <DropdownMenuItem
+                                        key={item.label}
+                                        onSelect={() => onSelectBySpeaker(item.label)}
+                                    >
+                                        <span>{formatMeetingSpeakerLabel(item)}</span>
+                                    </DropdownMenuItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                     <Button
                         size="sm"
                         variant="destructive"
@@ -907,6 +1030,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         selectionMode={canBulkDelete}
                                         isSelected={selection.includes(segment.id)}
                                         onToggleSelected={onToggleSelected}
+                                        onRowRangeSelect={onRowRangeSelect}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
@@ -981,6 +1105,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         selectionMode={canBulkDelete}
                                         isSelected={selection.includes(segment.id)}
                                         onToggleSelected={onToggleSelected}
+                                        onRowRangeSelect={onRowRangeSelect}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}

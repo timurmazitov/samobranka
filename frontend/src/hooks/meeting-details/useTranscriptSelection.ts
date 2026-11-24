@@ -32,6 +32,26 @@ export interface UseTranscriptSelectionReturn {
     toggleSelected: (transcriptId: string) => void;
     /** Replace the whole id set — ticket 03's «выделить всё видимое» and by-speaker. */
     setSelectedIds: (transcriptIds: string[]) => void;
+    /**
+     * Mark every loaded segment (ticket 03). «Выделить всё видимое»: the
+     * caller hands the ids of the LOADED segments (page-window honesty —
+     * speaker counts from the panel cover the whole meeting and would lie
+     * in «Удалить (N)»). Already-selected rows keep their selection-order
+     * slot, so the Shift anchor stays the id the user really touched last.
+     */
+    selectAllVisible: (transcriptIds: string[]) => void;
+    /**
+     * Toggle button form of select-all-visible: everything visible is
+     * already marked → clear; otherwise complete the selection.
+     */
+    toggleAllVisible: (transcriptIds: string[]) => void;
+    /**
+     * File-manager Shift-click (ticket 03): select the run from the last
+     * selected row to `targetId`, in the list's own order (`orderedIds`),
+     * inclusive. Without an anchor row there is no range: the click marks
+     * only the target.
+     */
+    rangeSelectTo: (targetId: string, orderedIds: string[]) => void;
 }
 
 export function useTranscriptSelection(
@@ -91,6 +111,71 @@ export function useTranscriptSelection(
         setSelectedIdsState(Array.from(new Set(transcriptIds)));
     }, []);
 
+    const selectAllVisible = useCallback((transcriptIds: string[]) => {
+        // Replace, but keep already-selected ids in their selection-order
+        // slots: the Shift anchor (ticket 03's file-manager ranges) is the
+        // LAST id the user touched, and re-marking a selected row must not
+        // promote it to the end of the order. An empty load replaces with
+        // nothing — a stale id never survives a press over an empty list.
+        setSelectedIdsState(prev => {
+            const visible = new Set(transcriptIds);
+            const kept = prev.filter(id => visible.has(id));
+            const added = transcriptIds.filter(id => !prev.includes(id));
+            return [...kept, ...added];
+        });
+    }, []);
+
+    const toggleAllVisible = useCallback((transcriptIds: string[]) => {
+        // The button answers «everything visible»: another press clears.
+        // A partial selection (checkboxes before/after the press) completes
+        // it instead — the clear only ever answers a fully-marked list.
+        setSelectedIdsState(prev => {
+            const everythingMarked = transcriptIds.length > 0
+                && transcriptIds.every(id => prev.includes(id));
+            if (everythingMarked) return [];
+            const visible = new Set(transcriptIds);
+            const kept = prev.filter(id => visible.has(id));
+            const added = transcriptIds.filter(id => !prev.includes(id));
+            return [...kept, ...added];
+        });
+    }, []);
+
+    const rangeSelectTo = useCallback((targetId: string, orderedIds: string[]) => {
+        // File-manager Shift-click: the run spans from the last touched row
+        // to the clicked one, in the list's own order, inclusive. Without
+        // an anchor there is no range, so the click marks only the target.
+        setSelectedIdsState(prev => {
+            const anchor = prev.length > 0 ? prev[prev.length - 1] : undefined;
+            if (anchor === undefined) {
+                return prev.includes(targetId) ? prev : [...prev, targetId];
+            }
+            const anchorIndex = orderedIds.indexOf(anchor);
+            const targetIndex = orderedIds.indexOf(targetId);
+            if (anchorIndex === -1 || targetIndex === -1) {
+                // The anchor or the target fell outside the loaded window
+                // (a page reload can swap rows underneath): single toggle.
+                return prev.includes(targetId)
+                    ? prev.filter(id => id !== targetId)
+                    : [...prev, targetId];
+            }
+            const from = Math.min(anchorIndex, targetIndex);
+            const to = Math.max(anchorIndex, targetIndex);
+            // Walk from the anchor to the target so the selection order
+            // (and the next Shift anchor) follows the click direction.
+            const range: string[] = [];
+            if (anchorIndex <= targetIndex) {
+                for (let i = from; i <= to; i++) range.push(orderedIds[i]);
+            } else {
+                for (let i = from; i <= to; i++) range.push(orderedIds[to - (i - from)]);
+            }
+            const next = [...prev];
+            for (const id of range) {
+                if (!next.includes(id)) next.push(id);
+            }
+            return next;
+        });
+    }, []);
+
     return {
         isSelecting,
         selectedIds,
@@ -101,5 +186,8 @@ export function useTranscriptSelection(
         exitSelection,
         toggleSelected,
         setSelectedIds,
+        selectAllVisible,
+        toggleAllVisible,
+        rangeSelectTo,
     };
 }
