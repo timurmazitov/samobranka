@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, Download, FolderOpen, RefreshCw, Users } from 'lucide-react';
+import { Copy, Download, FolderOpen, RefreshCw, Search, Users } from 'lucide-react';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { SpeakersPanel } from './SpeakersPanel';
 import type { DiarizationClient } from '@/lib/diarization';
@@ -20,6 +20,8 @@ interface TranscriptButtonGroupProps {
   meetingId?: string;
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
+  /** Opens the floating find & replace panel (meeting page). Absent elsewhere. */
+  onOpenFind?: () => void;
   /** Panel seams, forwarded so component tests can inject fakes. */
   diarizationClient?: DiarizationClient;
   diarizationModelClient?: Pick<AudioCppModelClient, 'getAvailableModels'> &
@@ -35,6 +37,7 @@ export function TranscriptButtonGroup({
   meetingId,
   meetingFolderPath,
   onRefetchTranscripts,
+  onOpenFind,
   diarizationClient,
   diarizationModelClient,
 }: TranscriptButtonGroupProps) {
@@ -118,6 +121,19 @@ export function TranscriptButtonGroup({
           >
             <RefreshCw className="@[22rem]:mr-2" size={18} />
             <span className="hidden @[22rem]:inline">{t('transcript.enhance')}</span>
+          </Button>
+        )}
+
+        {onOpenFind && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="px-2"
+            onClick={onOpenFind}
+            title={t('findReplace.openTooltip')}
+            aria-label={t('findReplace.openTooltip')}
+          >
+            <Search size={18} />
           </Button>
         )}
       </ButtonGroup>

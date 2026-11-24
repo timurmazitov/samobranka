@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
 import { MeetingDetailsSplitView, type MeetingDetailsTab } from '@/components/MeetingDetails/MeetingDetailsSplitView';
+import { FindReplacePanel } from '@/components/MeetingDetails/FindReplacePanel';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -18,6 +19,8 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
+import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
@@ -36,6 +39,7 @@ export default function PageContent({
   totalCount,
   loadedCount,
   onLoadMore,
+  onLoadAllPages,
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
@@ -54,6 +58,8 @@ export default function PageContent({
   totalCount?: number;
   loadedCount?: number;
   onLoadMore?: () => void;
+  /** Drain every remaining transcript page (find panel's first-open load). */
+  onLoadAllPages?: () => void | Promise<void>;
   // Speakers of this meeting, used by the per-row dropdown
   meetingSpeakers?: MeetingSpeaker[];
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
@@ -82,7 +88,7 @@ export default function PageContent({
   const autoGenerationStartedMeetingIdRef = useRef<string | null>(null);
 
   // Sidebar context
-  const { serverAddress } = useSidebar();
+  const { serverAddress, isCollapsed } = useSidebar();
 
   // Get model config from ConfigContext
   const { modelConfig, setModelConfig, isModelConfigLoading } = useConfig();
@@ -168,6 +174,89 @@ export default function PageContent({
     meeting,
   });
 
+  // The summary's searchable blocks, reported up by the summary surface
+  // (BlockNote / markdown / legacy) whenever its editor content changes. The
+  // hook folds them into the combined list after the transcript segments, so
+  // ↑/↓ walk one list across both sources.
+  const [summaryBlocks, setSummaryBlocks] = useState<SummaryBlock[]>([]);
+
+  // The find & replace panel's state: query, toggles, the combined match
+  // list over the loaded segments and the summary, and the active position.
+  // The first open drains every segment page through the pagination hook so
+  // matches cover the whole meeting.
+  // Summary replacement (ticket 05): the summary surface owns the live
+  // editor, so the panel's edits go through its imperative ref — BlockNote
+  // and markdown edit the PM doc in one transaction, legacy splices the
+  // plain block contents through the existing change callback. Nothing here
+  // saves: the editor's own dirty mechanism marks the summary unsaved and
+  // the ordinary save button (saveAllChanges → api_save_meeting_summary)
+  // persists it, so a replace survives a reload exactly like manual typing.
+  const handleSummaryReplace = useCallback(async (edits: SummaryReplaceEdit[]) => {
+    return meetingData.blockNoteSummaryRef.current?.replaceSummary(edits) ?? false;
+  }, [meetingData.blockNoteSummaryRef]);
+
+  const findReplace = useFindReplace({
+    segments: segments ?? [],
+    summaryBlocks,
+    loadAllPages: onLoadAllPages,
+    // Replacement reuses the same save callback the row editor uses: the page
+    // wires it to the pagination hook's optimistic setTranscriptText (with
+    // rollback), and page-content fires the stale-summary hint after a
+    // successful save — replaced segments therefore persist and hint exactly
+    // like manually edited rows.
+    onTextEdited: handleTranscriptTextEdited,
+    onSummaryReplace: handleSummaryReplace,
+  });
+  const { openPanel, closePanel } = findReplace;
+
+  // Navigation follows the active match across the split view: a summary
+  // match reveals the summary tab, a transcript match the transcript tab.
+  // The tab is only ever moved while the panel is open, and the manual
+  // selection marker (the auto-switch's guard) is set like the tab strip's
+  // own handler does, so the summary auto-switch never fights navigation.
+  useEffect(() => {
+    if (!findReplace.open) return;
+    const active = findReplace.activeIndex >= 0
+      ? findReplace.matches[findReplace.activeIndex]
+      : undefined;
+    if (!active) return;
+    manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
+    setActiveTab(active.source === 'summary' ? 'summary' : 'transcript');
+  }, [findReplace.open, findReplace.matches, findReplace.activeIndex, meeting.id]);
+
+  // Page hotkeys — the meeting page's only document keydown listener. Ctrl/Cmd
+  // +F and +H are intercepted with preventDefault, which also suppresses the
+  // webview's native find; +H focuses the replace field. Esc closes. No
+  // hotkey library: the legacy summary editor's Ctrl handler is the precedent.
+  useEffect(() => {
+    // Headless render environments (react-test-renderer) have no document,
+    // and a polluted test process can hold a partial stub: register only on
+    // a real DOM. A real webview always has one.
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Physical key codes too: on a Cyrillic layout Ctrl+Ф arrives as key
+      // 'а', and the panel must still open.
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (event.code === 'KeyF' || event.key === 'f' || event.key === 'F') {
+          event.preventDefault();
+          openPanel({ focus: 'search' });
+        } else if (event.code === 'KeyH' || event.key === 'h' || event.key === 'H') {
+          event.preventDefault();
+          openPanel({ focus: 'replace' });
+        }
+      } else if (event.key === 'Escape' && !event.defaultPrevented) {
+        // A row editor's Escape cancels the edit and marks the event handled;
+        // only an unclaimed Escape closes the panel.
+        closePanel();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [openPanel, closePanel]);
+
   useEffect(() => {
     if (
       (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
@@ -245,6 +334,10 @@ export default function PageContent({
               onSpeakerChanged={onSpeakerChanged}
               onTextEdited={handleTranscriptTextEdited}
               isDiarizing={isDiarizing}
+              onOpenFind={() => openPanel({ focus: 'search' })}
+              findOpen={findReplace.open}
+              findMatches={findReplace.matches}
+              findActiveIndex={findReplace.activeIndex}
             />
           }
           summary={
@@ -278,10 +371,40 @@ export default function PageContent({
               onTemplateSelect={templates.handleTemplateSelection}
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={handleRegisterModalOpen}
+              onOpenFind={() => openPanel({ focus: 'search' })}
+              findOpen={findReplace.open}
+              findMatches={findReplace.matches}
+              findActiveIndex={findReplace.activeIndex}
+              onSummaryBlocksChange={setSummaryBlocks}
             />
           }
         />
       </div>
+
+      {/* The find & replace card: fixed, non-modal, sidebar-compensated. */}
+      <FindReplacePanel
+        open={findReplace.open}
+        query={findReplace.query}
+        onQueryChange={findReplace.setQuery}
+        replaceText={findReplace.replaceText}
+        onReplaceTextChange={findReplace.setReplaceText}
+        caseSensitive={findReplace.caseSensitive}
+        onCaseSensitiveChange={findReplace.setCaseSensitive}
+        wholeWord={findReplace.wholeWord}
+        onWholeWordChange={findReplace.setWholeWord}
+        current={findReplace.current}
+        total={findReplace.total}
+        hasQuery={findReplace.hasQuery}
+        onPrevious={findReplace.goPrev}
+        onNext={findReplace.goNext}
+        onClose={closePanel}
+        onReplaceActive={findReplace.replaceActive}
+        onReplaceAll={findReplace.replaceAll}
+        replaceableCount={findReplace.replaceableCount}
+        focusTarget={findReplace.focusTarget}
+        focusNonce={findReplace.focusNonce}
+        sidebarCollapsed={isCollapsed}
+      />
     </motion.div>
   );
 }

@@ -1080,6 +1080,23 @@
     "homeExport": "Экспорт",
     "homeLanguage": "Язык"
   },
+  "findReplace": {
+    "title": "Найти и заменить",
+    "openTooltip": "Найти и заменить в транскрипте",
+    "searchPlaceholder": "Искать",
+    "replacePlaceholder": "Заменить",
+    "replace": "Заменить",
+    "replaceAll": "Заменить все ({{count}})",
+    "replaceAllFailed": "Часть замен не сохранилась",
+    "replaceAllFailedDescription_one": "Не сохранена {{count}} строка; её совпадение осталось в списке.",
+    "replaceAllFailedDescription_few": "Не сохранено {{count}} строки; их совпадения остались в списке.",
+    "replaceAllFailedDescription_many": "Не сохранено {{count}} строк; их совпадения остались в списке.",
+    "previousMatch": "Предыдущее совпадение",
+    "nextMatch": "Следующее совпадение",
+    "caseSensitive": "Учитывать регистр",
+    "wholeWord": "Слово целиком",
+    "openSummaryTooltip": "Найти и заменить в конспекте"
+  },
   "summary": {
     "stopTooltip": "Остановить создание конспекта",
     "stop": "Стоп",

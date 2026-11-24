@@ -49,6 +49,7 @@ function MeetingDetailsContent() {
     totalCount,
     loadedCount,
     loadMore,
+    loadAllPages,
     refetch,
     refetchMetadata,
     setTranscriptSpeaker,
@@ -379,6 +380,7 @@ function MeetingDetailsContent() {
     totalCount={totalCount}
     loadedCount={loadedCount}
     onLoadMore={loadMore}
+    onLoadAllPages={loadAllPages}
   />;
 }
 
