@@ -215,23 +215,29 @@ export default function PageContent({
   // Bulk selection mode (ticket 02). The page owns the ephemeral id set —
   // like it owns the find panel's state — because the view is shared with
   // the live recording page. Ticket 04 wires both exclusivity directions
-  // through these callbacks: `exitSelection` when Find opens (including the
-  // Ctrl+F/H hotkey path) and when the pencil opens an editor.
+  // through the callbacks below, next to the find hook.
   const selection = useTranscriptSelection(meeting?.id);
   const {
-    exitSelection,
     setSelectedIds: setSelectedSegments,
+    toggleSelection,
+    exitSelection,
     toggleAllVisible: toggleAllVisibleSegments,
     rangeSelectTo: rangeSelectToSegment,
   } = selection;
+
   // After a successful batch the deleted ids are gone, so the selection
   // empties while the mode stays open for further cleaning; a rejection
   // keeps the selection intact so the user can retry after the rollback.
-  // The stale-summary hint for bulk delete is ticket 05's call to add here.
+  // A batch delete removes rows the summary was built from, so it makes an
+  // existing summary stale exactly like an edit or a single delete (ticket
+  // 05): one hint per batch through the same id-deduped chain, only after
+  // the batch resolves — a rejection propagates to the toolbar (its toast)
+  // and skips the hint.
   const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
     await onSegmentsBulkDeleted?.(transcriptIds);
     setSelectedSegments([]);
-  }, [onSegmentsBulkDeleted, setSelectedSegments]);
+    notifySummaryStale();
+  }, [onSegmentsBulkDeleted, setSelectedSegments, notifySummaryStale]);
 
   // Ticket 03's assistants. «Выделить всё видимое» is a toggle over the
   // LOADED segments (the second press clears); by-speaker filters the same
@@ -312,6 +318,26 @@ export default function PageContent({
   });
   const { openPanel, closePanel } = findReplace;
 
+  // Mode exclusivity over the transcript rows (ticket 04): at most one bulk
+  // mode at a time. Entering the selection mode closes the find panel here;
+  // an open inline editor needs no page action — the view's selectionMode
+  // effect (the allowTextEdit-flip precedent in VirtualizedTranscriptView)
+  // flushes its draft through the host save path and closes it. Symmetrically
+  // every find entry point — both panel buttons and the Ctrl+F/H hotkeys
+  // below — leaves the mode and drops the ids, and so does the pencil, via
+  // the view's onExitSelection. No state ever shows checkboxes, an editor and
+  // the highlights together.
+  const toggleSelectionMode = useCallback(() => {
+    // Closing the (already closed, by exclusivity) panel on the way out is a
+    // no-op; on the way in it disarms find.
+    toggleSelection();
+    closePanel();
+  }, [toggleSelection, closePanel]);
+  const openFindPanel = useCallback((options?: { focus?: 'search' | 'replace' }) => {
+    exitSelection();
+    openPanel(options);
+  }, [exitSelection, openPanel]);
+
   // Navigation follows the active match across the split view: a summary
   // match reveals the summary tab, a transcript match the transcript tab.
   // The tab is only ever moved while the panel is open, and the manual
@@ -345,10 +371,10 @@ export default function PageContent({
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         if (event.code === 'KeyF' || event.key === 'f' || event.key === 'F') {
           event.preventDefault();
-          openPanel({ focus: 'search' });
+          openFindPanel({ focus: 'search' });
         } else if (event.code === 'KeyH' || event.key === 'h' || event.key === 'H') {
           event.preventDefault();
-          openPanel({ focus: 'replace' });
+          openFindPanel({ focus: 'replace' });
         }
       } else if (event.key === 'Escape' && !event.defaultPrevented) {
         // The selection mode owns Escape while it is open: it exits the mode
@@ -381,7 +407,7 @@ export default function PageContent({
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [openPanel, closePanel, selection.isSelecting, selection.selectedCount, exitSelection]);
+  }, [openFindPanel, closePanel, selection.isSelecting, selection.selectedCount, exitSelection]);
 
   useEffect(() => {
     if (
@@ -463,15 +489,16 @@ export default function PageContent({
               isDiarizing={isDiarizing}
               isRetranscribing={isRetranscribing}
               selectionMode={selection.isSelecting}
-              onToggleSelection={selection.toggleSelection}
+              onToggleSelection={toggleSelectionMode}
               selectedIds={selection.selectedIds}
               onToggleSelected={selection.toggleSelected}
               onSegmentsBulkDeleted={handleSegmentsBulkDeleted}
+              onExitSelection={exitSelection}
               onSelectAllVisible={handleSelectAllVisible}
               onSelectBySpeaker={handleSelectBySpeaker}
               onRowRangeSelect={handleRowRangeSelect}
               bulkDeleteNonce={bulkDeleteNonce}
-              onOpenFind={() => openPanel({ focus: 'search' })}
+              onOpenFind={() => openFindPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}
               findActiveIndex={findReplace.activeIndex}
@@ -508,7 +535,7 @@ export default function PageContent({
               onTemplateSelect={templates.handleTemplateSelection}
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={handleRegisterModalOpen}
-              onOpenFind={() => openPanel({ focus: 'search' })}
+              onOpenFind={() => openFindPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}
               findActiveIndex={findReplace.activeIndex}

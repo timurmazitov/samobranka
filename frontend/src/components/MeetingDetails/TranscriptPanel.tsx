@@ -53,6 +53,8 @@ interface TranscriptPanelProps {
   selectedIds?: string[];
   onToggleSelected?: (transcriptId: string) => void;
   onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+  /** Leave the selection mode and clear the ids (ticket 04, pencil click). */
+  onExitSelection?: () => void;
   // Ticket 03's assistants + keyboard seam, threaded to the view's bar.
   onSelectAllVisible?: () => void;
   onSelectBySpeaker?: (label: string) => void;
@@ -97,6 +99,7 @@ export function TranscriptPanel({
   selectedIds,
   onToggleSelected,
   onSegmentsBulkDeleted,
+  onExitSelection,
   onSelectAllVisible,
   onSelectBySpeaker,
   onRowRangeSelect,
@@ -171,6 +174,7 @@ export function TranscriptPanel({
           selectedIds={selectedIds}
           onToggleSelected={onToggleSelected}
           onSegmentsBulkDeleted={onSegmentsBulkDeleted}
+          onExitSelection={onExitSelection}
           onSelectAllVisible={onSelectAllVisible}
           onSelectBySpeaker={onSelectBySpeaker}
           onRowRangeSelect={onRowRangeSelect}
