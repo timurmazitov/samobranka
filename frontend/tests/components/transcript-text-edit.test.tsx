@@ -343,7 +343,12 @@ describe('inline transcript text editing', () => {
     expect(text(view)).toContain('Original text');
   });
 
-  test('an empty draft is not saved', async () => {
+  test('a whitespace-only draft is rejected by the backend and toasts an error', async () => {
+    // The repository is authoritative on "never empty" (it rejects the save),
+    // and the row surfaces that rejection like any other failed save.
+    saveText = async () => {
+      throw new Error('transcript text cannot be empty');
+    };
     const edited = mock(async (_id: string, _text: string) => {});
     const view = await render(
       [{ id: 't1', timestamp: 0, text: 'Keep me' }],
@@ -354,9 +359,63 @@ describe('inline transcript text editing', () => {
     await type(view, '   \n  ');
     await press(view, 'Enter');
 
+    // The save attempt goes to the backend, which is the authority that
+    // rejects it; the row never silently swallows the empty edit.
+    expect(invoke.mock.calls).toContainEqual([
+      'api_update_transcript_text',
+      { transcriptId: 't1', text: '' },
+    ]);
+    expect(edited).not.toHaveBeenCalled();
+    expect(errorNotify).toHaveBeenCalled();
+    expect(errorNotify.mock.calls[0][0]).toBe('Failed to update text');
+    expect(text(view)).toContain('Keep me');
+  });
+
+  test('the error toast names the failure without repeating meeting content', async () => {
+    saveText = async () => {
+      throw new Error('transcript not found: transcript-42');
+    };
+    const view = await render(
+      [{ id: 't1', timestamp: 0, text: 'Secret meeting words' }],
+      { onTextEdited: async () => {} },
+    );
+
+    await openEditor(view);
+    await type(view, 'Confidential private correction');
+    await press(view, 'Enter');
+
+    expect(errorNotify).toHaveBeenCalled();
+    const [title, options] = errorNotify.mock.calls[0];
+    // The title is the translated, generic label and the description is the
+    // backend's own message — neither carries the old text or the discarded
+    // draft (the command's errors only ever mention the row id).
+    expect(title).toBe('Failed to update text');
+    const toastText = JSON.stringify([title, options]);
+    expect(toastText).not.toContain('Secret meeting words');
+    expect(toastText).not.toContain('Confidential private correction');
+  });
+
+  test('blur after Escape never revives the discarded draft', async () => {
+    const edited = mock(async (_id: string, _text: string) => {});
+    const view = await render(
+      [{ id: 't1', timestamp: 0, text: 'Original text' }],
+      { onTextEdited: edited },
+    );
+
+    await openEditor(view);
+    await type(view, 'Discarded draft');
+    // Keep a handle on the blur handler before the editor closes: some
+    // browsers fire focusout when the focused element is removed from the DOM,
+    // and that late blur must not save what Escape just cancelled.
+    const blurAfterEscape = textarea(view).props.onBlur;
+    await press(view, 'Escape');
+    await act(async () => {
+      blurAfterEscape();
+    });
+
     expect(invoke).not.toHaveBeenCalled();
     expect(edited).not.toHaveBeenCalled();
-    expect(text(view)).toContain('Keep me');
+    expect(text(view)).toContain('Original text');
   });
 
   test('a diarization run starting while the editor is open saves the draft once and closes the editor', async () => {
