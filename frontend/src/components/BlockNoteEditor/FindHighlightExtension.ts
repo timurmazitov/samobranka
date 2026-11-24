@@ -17,6 +17,13 @@ import { createFindHighlightPlugin } from '@/lib/summary-find-decorations';
  * and unit-tested in `tests/lib/summary-find-decorations.test.ts`.
  */
 export class FindHighlightExtension extends BlockNoteExtension {
+  // BlockNote registers each `extensions` entry by its constructor key, and
+  // the base class's `key()` THROWS unless a subclass implements it — every
+  // editor creation with this extension crashed until this existed.
+  static key() {
+    return 'findHighlight';
+  }
+
   constructor() {
     super();
     this.addProsemirrorPlugin(createFindHighlightPlugin());

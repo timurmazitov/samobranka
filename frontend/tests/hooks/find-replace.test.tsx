@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { MeetingMetadata, PaginatedTranscriptsResponse, TranscriptSegmentData } from '../../src/types';
 
@@ -45,11 +46,13 @@ const HOSTED_SEGMENTS: HostedSegment[] = [
 function View({
   segments = SEGMENTS,
   summaryBlocks,
+  onSummaryReplace,
 }: {
   segments?: TranscriptSegmentData[];
   summaryBlocks?: import('../../src/hooks/meeting-details/useFindReplace').SummaryBlock[];
+  onSummaryReplace?: (edits: import('../../src/lib/summary-find-replace').SummaryReplaceEdit[]) => void | Promise<void>;
 }) {
-  state = useFindReplace({ segments, summaryBlocks, loadAllPages });
+  state = useFindReplace({ segments, summaryBlocks, loadAllPages, onSummaryReplace });
   return <output>{state.matches.length}:{state.activeIndex}</output>;
 }
 
@@ -677,5 +680,256 @@ describe('useFindReplace replacement', () => {
     // The caller is told exactly how many saves failed — with no raw text.
     expect(replaceAllError).toBeInstanceOf(ReplaceAllPartialFailureError);
     expect((replaceAllError as InstanceType<typeof ReplaceAllPartialFailureError>).failedCount).toBe(1);
+  });
+});
+
+/**
+ * Summary replacement at the hook seam (ticket 05): the hook plans edits in
+ * block/offset space and hands them to the host's summary-replace path — the
+ * summary surface that owns the live editor. The host here is a recorder: it
+ * receives the planned SummaryReplaceEdit list and reports back whether the
+ * edits applied (false = skipped, exactly the state after a host-side abort),
+ * and the tests recompute the match list from the resulting blocks the same
+ * way the real surface reports changed content up.
+ */
+describe('useFindReplace summary replacement', () => {
+  const SUMMARY_BLOCKS = [
+    { blockId: 'b1', text: 'alpha overview' },
+    { blockId: 'b2', text: 'beta again and Alpha twice' },
+  ];
+  // Stable identities: a fresh literal per render would make the memoized
+  // match list new on every render and the ordinary reset would keep
+  // restarting navigation (the module-level SEGMENTS plays this role above).
+  const NO_SEGMENTS: TranscriptSegmentData[] = [];
+
+  let summaryCalls: SummaryReplaceEdit[][];
+  let summaryApply: (edits: SummaryReplaceEdit[]) => boolean;
+  // The blocks are React state: when the host applies the edits, the new
+  // texts flow back into the hook exactly as the real summary surface
+  // reports changed content up, and the match list recomputes.
+  let setBlocksState: (
+    update: { blockId: string; text: string }[]
+      | ((current: { blockId: string; text: string }[]) => { blockId: string; text: string }[]),
+  ) => void;
+
+  function SummaryView() {
+    const [blocks, setBlocks] = useState<{ blockId: string; text: string }[]>([]);
+    setBlocksState = setBlocks;
+    state = useFindReplace({
+      segments: NO_SEGMENTS,
+      summaryBlocks: blocks,
+      onSummaryReplace: async (edits) => {
+        summaryCalls.push(edits);
+        const applied = summaryApply(edits);
+        if (applied) {
+          // The host applied the edits: right-to-left splice, the same text
+          // the editor would now hold, reported up like the real surface does.
+          setBlocks(current => current.map(block => {
+            let text = block.text;
+            const mine = edits.filter(edit => edit.blockId === block.blockId)
+              .sort((a, b) => b.from - a.from);
+            for (const edit of mine) {
+              text = text.slice(0, edit.from) + edit.replacement + text.slice(edit.to);
+            }
+            return { ...block, text };
+          }));
+        }
+        return applied;
+      },
+    });
+    return null;
+  }
+
+  type SummaryReplaceEdit = import('../../src/lib/summary-find-replace').SummaryReplaceEdit;
+
+  async function showSummary() {
+    summaryCalls = [];
+    summaryApply = () => true;
+    await act(async () => { renderer = create(<SummaryView />); });
+    await act(async () => { setBlocksState(SUMMARY_BLOCKS.map(block => ({ ...block }))); });
+  }
+
+  test('«Заменить» on a summary match sends one block/offset edit and advances', async () => {
+    await showSummary();
+    await setQuery('alpha');
+    // b1's «alpha» first, then b2's «Alpha» (case-insensitive by default).
+    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+    expect(state.activeIndex).toBe(0);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceActive(); });
+
+    expect(summaryCalls).toHaveLength(1);
+    expect(summaryCalls[0]).toEqual([
+      { blockId: 'b1', from: 0, to: 5, expected: 'alpha', replacement: 'Zeta' },
+    ]);
+
+    // The recomputed list (from the new block text): only b2's match is left,
+    // and navigation lands on it — the VS Code advance.
+    expect(state.matches.map(m => m.key)).toEqual(['summary:b2:0']);
+    expect(state.activeIndex).toBe(0);
+    expect(state.current).toBe(1);
+    expect(state.total).toBe(1);
+  });
+
+  test('replacing the last match of the list cycles; emptying it clears the position', async () => {
+    await showSummary();
+    await setQuery('alpha');
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(1); // b2's «Alpha», the list's last match
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceActive(); });
+
+    expect(summaryCalls[0]).toEqual([
+      { blockId: 'b2', from: 15, to: 20, expected: 'Alpha', replacement: 'Zeta' },
+    ]);
+    // The replaced match was the list's last one; no match sits strictly
+    // after its range, so navigation wraps to the surviving b1 match.
+    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0']);
+    expect(state.activeIndex).toBe(0);
+    expect(state.current).toBe(1);
+    expect(state.total).toBe(1);
+
+    // And the match that used the list up entirely: no active position.
+    await act(async () => { void state.replaceActive(); });
+    expect(state.matches).toEqual([]);
+    expect(state.activeIndex).toBe(-1);
+    expect(state.current).toBe(0);
+  });
+
+  test('a no-op summary replace writes nothing but still advances', async () => {
+    await showSummary();
+    await setQuery('alpha');
+    await act(async () => { state.setReplaceText('alpha'); });
+    await act(async () => { void state.replaceActive(); });
+
+    // Nothing to write (the field repeats the match) — but «Заменить» walks.
+    expect(summaryCalls).toHaveLength(0);
+    expect(state.activeIndex).toBe(1);
+  });
+
+  test('a skipped summary edit keeps the active position on the match', async () => {
+    await showSummary();
+    await setQuery('alpha');
+    expect(state.activeIndex).toBe(0);
+
+    // The host aborts (text changed under the range, its honesty gate): the
+    // user keeps facing the match they could not replace.
+    summaryApply = () => false;
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceActive(); });
+
+    expect(summaryCalls).toHaveLength(1);
+    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+    expect(state.activeIndex).toBe(0);
+  });
+
+  test('replace all covers transcript and summary together, one summary call', async () => {
+    // The full meeting-page shape: real pagination host for the transcript,
+    // the recording host for the summary, one combined list.
+    let host: ReturnType<typeof usePaginatedTranscripts>;
+    summaryCalls = [];
+    summaryApply = () => {
+      setBlocksState(current => current.map(block => ({
+        ...block,
+        text: block.text.replaceAll('beta', 'Zeta'),
+      })));
+      return true;
+    };
+    function Hosted() {
+      const [blocks, setBlocks] = useState<{ blockId: string; text: string }[]>(
+        [{ blockId: 'b1', text: 'beta overview and beta tail' }],
+      );
+      setBlocksState = setBlocks;
+      host = usePaginatedTranscripts({ meetingId: 'M' });
+      state = useFindReplace({
+        segments: host.segments,
+        summaryBlocks: blocks,
+        loadAllPages: host.loadAllPages,
+        onTextEdited: host.setTranscriptText,
+        onSummaryReplace: async (edits) => {
+          summaryCalls.push(edits);
+          return summaryApply(edits);
+        },
+      });
+      return null;
+    }
+
+    await act(async () => { renderer = create(<Hosted />); });
+    const metadata = requests.find(r => r.command === 'api_get_meeting_metadata');
+    expect(metadata).toBeDefined();
+    await act(async () => {
+      metadata!.resolve({ id: 'M', title: 'M', created_at: '2026-09-07', updated_at: '2026-09-07' } satisfies MeetingMetadata);
+    });
+    const firstPage = requests.find(r => r.command === 'api_get_meeting_transcripts');
+    expect(firstPage).toBeDefined();
+    await act(async () => {
+      firstPage!.resolve({
+        transcripts: [
+          { id: 't1', text: 'beta lead', timestamp: '00:00', audio_start_time: 0 },
+          { id: 't2', text: 'beta mid and beta tail', timestamp: '00:01', audio_start_time: 1 },
+        ],
+        total_count: 2,
+        has_more: false,
+      } satisfies PaginatedTranscriptsResponse);
+    });
+    await act(async () => { state.openPanel(); });
+    await setQuery('beta');
+
+    // 3 transcript matches + 2 summary matches: the shared counter and the
+    // «Заменить все (N)» number now cover both sources.
+    expect(state.total).toBe(5);
+    expect(state.replaceableCount).toBe(5);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceAll(); });
+
+    // Transcript: one sequenced save per changed segment (existing path).
+    const edits = requests.filter(r => r.command === 'api_update_transcript_text');
+    expect(edits).toHaveLength(1);
+    expect(edits[0].args).toEqual({ transcriptId: 't1', text: 'Zeta lead' });
+    await act(async () => { edits[0].resolve({ message: 'ok' }); });
+    expect(requests.filter(r => r.command === 'api_update_transcript_text')).toHaveLength(2);
+    expect(requests.filter(r => r.command === 'api_update_transcript_text')[1].args)
+      .toEqual({ transcriptId: 't2', text: 'Zeta mid and Zeta tail' });
+    await act(async () => { requests.filter(r => r.command === 'api_update_transcript_text')[1].resolve({ message: 'ok' }); });
+
+    // Summary: ONE call carrying both block edits, with expected texts.
+    expect(summaryCalls).toHaveLength(1);
+    expect(summaryCalls[0]).toEqual([
+      { blockId: 'b1', from: 0, to: 4, expected: 'beta', replacement: 'Zeta' },
+      { blockId: 'b1', from: 18, to: 22, expected: 'beta', replacement: 'Zeta' },
+    ]);
+
+    // Everything replaced: the recompute is empty across both sources.
+    expect(state.matches).toEqual([]);
+    expect(state.replaceableCount).toBe(0);
+  });
+
+  test('replace all with a skipped summary keeps its matches while the transcript saves', async () => {
+    await showSummary();
+    await setQuery('alpha');
+    summaryApply = () => false; // the editor's honesty gate aborted the batch
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceAll(); });
+
+    // The skipped batch is not a failure toast-worthy event: no throw, and
+    // the summary matches are still there because their text never changed.
+    expect(summaryCalls).toHaveLength(1);
+    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+  });
+
+  test('without a summary-replace path summary matches stay out of the replace-all count', async () => {
+    // The combined navigation still lists them (ticket 04), but a match that
+    // nothing can replace is never counted into «Заменить все (N)».
+    await show();
+    await act(async () => {
+      renderer!.update(<View summaryBlocks={SUMMARY_BLOCKS} />);
+    });
+    await setQuery('alpha');
+    expect(state.total).toBe(5); // 3 transcript + 2 summary
+    expect(state.replaceableCount).toBe(3);
   });
 });

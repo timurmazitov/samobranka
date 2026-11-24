@@ -14,12 +14,16 @@ import { findHighlightKey } from './summary-find-decorations';
  * ProseMirror document positions, where the block is addressed by its
  * BlockNote id.
  *
- * The shape mirrors the BlockNote 0.36 PM model: block nodes carry their
- * BlockNote id in `attrs.id`; a block's own text lives in its text
- * descendants and its children start one past the block node's start;
- * nested blocks are separate block nodes whose text belongs to THEM, so a
- * parent's searchable text (the same composition `buildBlockNoteSummaryBlocks`
- * makes) never counts a nested block's characters.
+ * The shape mirrors the BlockNote 0.36 PM model: the top level is blockGroup
+ * wrappers (no id) around blockContainer nodes, which carry the BlockNote id
+ * in `attrs.id` and hold their text inside an id-less block-type child
+ * (paragraph / heading / bulletListItem — PM block nodes that are NOT their
+ * own BlockNote block), with a block's nested blocks as a sibling blockGroup
+ * under the same container. So a run belongs to a block's own text unless it
+ * lives under a descendant that carries its own id (the next BlockNote
+ * block); id-less block wrappers are transparent. A parent's searchable text
+ * (the same composition `buildBlockNoteSummaryBlocks` makes) never counts a
+ * nested block's characters.
  *
  * Plain-object node views (`PMBlockNode`) keep this testable without a DOM;
  * the caller adapts real PM nodes with `toPMBlockEntry`.
@@ -50,9 +54,19 @@ function nodeSize(node: PMBlockNode): number {
   return (node.children ?? []).reduce((size, child) => size + nodeSize(child), 0) + 2;
 }
 
+/** Whether a node is its own BlockNote block: the id-carrying blockContainer. */
+function carriesOwnId(node: PMBlockNode): boolean {
+  return typeof node.attrs?.id === 'string' && node.attrs.id !== '';
+}
+
 /**
  * The block's own text runs in order: text descendants of the node, without
- * descending into nested block nodes (their text belongs to the child block).
+ * descending into nodes that carry their own BlockNote id (their text belongs
+ * to that nested block). Id-less wrappers — the blockContent child holding
+ * the block's runs (paragraph, heading, list item) and defensive inline
+ * wrappers — are transparent, with the PM token arithmetic kept straight: a
+ * block wrapper's content starts one past its open token, an inline wrapper
+ * consumes no tokens of its own.
  */
 function collectOwnTextRuns(node: PMBlockNode, contentStart: number): TextRun[] {
   const runs: TextRun[] = [];
@@ -61,16 +75,15 @@ function collectOwnTextRuns(node: PMBlockNode, contentStart: number): TextRun[] 
     if (child.isText) {
       runs.push({ pos, text: child.text ?? '' });
       pos += child.text?.length ?? 0;
-    } else if (child.isBlock) {
+    } else if (child.isBlock && carriesOwnId(child)) {
       // Nested block: consumes its full node size but contributes no text
       // to this block's searchable text.
       pos += nodeSize(child);
     } else {
-      // Non-block inline wrapper (defensive: links are marks in PM, not
-      // nodes): descend — its text belongs to this block.
-      const nested = collectOwnTextRuns(child, pos);
+      // Wrapper of this block's own text: descend — its text belongs here.
+      const nested = collectOwnTextRuns(child, child.isBlock ? pos + 1 : pos);
       runs.push(...nested);
-      pos += nodeSize(child) - 2;
+      pos += child.isBlock ? nodeSize(child) : nodeSize(child) - 2;
     }
   }
   return runs;

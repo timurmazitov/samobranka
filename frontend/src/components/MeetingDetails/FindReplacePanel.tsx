@@ -32,7 +32,7 @@ interface FindReplacePanelProps {
     onClose: () => void;
     /** Replaces the active match (host save path) and advances. Async so the panel can guard the click. */
     onReplaceActive: () => Promise<void>;
-    /** Replaces every match in one action; rejects when some segment saves failed. */
+    /** Replaces every transcript and summary match in one action; rejects when some segment saves failed. */
     onReplaceAll: () => Promise<void>;
     /** Matches «Заменить все» can replace; counted in its label. */
     replaceableCount: number;
@@ -48,10 +48,11 @@ interface FindReplacePanelProps {
  * The floating «Найти и заменить» card: fixed top-right with the sidebar
  * width compensation of the status overlays, deliberately not a Radix Dialog
  * so the text under it stays clickable and scrolls during navigation. The
- * replacement actions delegate to the hook (which saves through the host's
- * segment-edit path); this component only guards the click while a save
- * round-trips and toasts a failure with the existing translated strings.
- * Enter / Shift+Enter walk the match list like ↑/↓ do.
+ * replacement actions delegate to the hook (which saves transcripts through
+ * the host's segment-edit path and applies summary edits through the
+ * summary's editor host); this component only guards the click while a
+ * round-trip is open and toasts a failure with the existing translated
+ * strings. Enter / Shift+Enter walk the match list like ↑/↓ do.
  */
 export function FindReplacePanel({
     open,

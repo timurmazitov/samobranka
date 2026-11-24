@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TranscriptSegmentData } from '@/types';
 import { findMatches } from '@/lib/find-matches';
+import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 
 /**
  * One hit of the find & replace panel. Matches are found inside a single
@@ -210,6 +211,18 @@ interface UseFindReplaceProps {
      * edit and a replace persist identically and roll back identically.
      */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+    /**
+     * The host's summary-replacement path — the summary surface applying the
+     * given block/offset edits to its live editor (BlockNote: one PM
+     * transaction via `applySummaryReplacements`; legacy: plain splices on
+     * `block.content` through the existing change callback). Resolves false
+     * when the edits were skipped — the doc text under a range no longer
+     * matches the `expected` text, so the host applied nothing — exactly the
+     * situation a rolled-back segment save produces on the transcript side.
+     */
+    onSummaryReplace?: (
+        edits: SummaryReplaceEdit[],
+    ) => boolean | void | Promise<boolean | void>;
 }
 
 interface UseFindReplaceReturn {
@@ -249,20 +262,26 @@ interface UseFindReplaceReturn {
     /** Cyclic backward navigation; inert without matches. */
     goPrev: () => void;
     /**
-     * Replace the active match with `replaceText` through the host's save path
-     * and advance to the next match. Resolves when the save round-trip ends;
-     * a failed save keeps the active position on the still-unreplaced match.
-     * Resolves without a save when there is no host save path or no matches.
+     * Replace the active match — in a transcript segment through the host's
+     * save path, or in a summary block through the host's summary-replace
+     * path — and advance to the next match. Resolves when the round-trip
+     * ends; a failed save (or a skipped replacement) keeps the active
+     * position on the still-unreplaced match. Resolves without any host call
+     * when there is no host path or no matches.
      */
     replaceActive: () => Promise<void>;
     /**
-     * Replace every match in every loaded segment in one action: one save per
-     * changed segment, sequenced through the host's save path. A failed
-     * segment keeps its text (and, after the recompute, its matches); the
-     * other segments stay saved.
+     * Replace every match in one action: one save per changed transcript
+     * segment, sequenced through the host's save path, plus one summary call
+     * carrying every summary edit (the host batches them into a single
+     * editor transaction). A failed segment keeps its text (and, after the
+     * recompute, its matches); the other segments stay saved.
      */
     replaceAll: () => Promise<void>;
-    /** Matches the «Заменить все» button counts in its label. */
+    /**
+     * Matches «Заменить все» can actually replace — transcript and summary
+     * alike — counted in its label.
+     */
     replaceableCount: number;
 }
 
@@ -279,6 +298,7 @@ export function useFindReplace({
     summaryBlocks,
     loadAllPages,
     onTextEdited,
+    onSummaryReplace,
 }: UseFindReplaceProps): UseFindReplaceReturn {
     const [open, setOpen] = useState(false);
     const [query, setQueryState] = useState('');
@@ -315,11 +335,21 @@ export function useFindReplace({
     // the user on text they just typed; cycling still reaches it. The nonce
     // re-runs the effect even when the save changed no further state (the
     // optimistic update already re-rendered while the command was in flight).
-    const advanceAnchorRef = useRef<{ segmentId: string; to: number } | null>(null);
+    // An anchor names the replaced match's source and container (segment or
+    // block), so both sides of the combined list can anchor navigation.
+    const advanceAnchorRef = useRef<{
+        source: FindMatchSource;
+        containerId: string;
+        to: number;
+    } | null>(null);
     // A rejected replacement asks the opposite: land back on the match the
     // host's rollback restores, so the user faces the match they could not
     // save instead of the list head.
-    const restoreAnchorRef = useRef<{ segmentId: string; from: number } | null>(null);
+    const restoreAnchorRef = useRef<{
+        source: FindMatchSource;
+        containerId: string;
+        from: number;
+    } | null>(null);
     const [advanceNonce, setAdvanceNonce] = useState(0);
 
     // Any new match list — a new query, a toggle, or freshly loaded pages —
@@ -332,13 +362,18 @@ export function useFindReplace({
     const settledMatchesRef = useRef(matches);
     useEffect(() => {
         // A failed save asks to land back on the match the host rolled back
-        // into the list (same segment, same start). While the rolled-back text
-        // has not arrived yet the request stays pending, so the list can pass
-        // through intermediate recomputations without losing it.
+        // into the list (same container, same start). While the rolled-back
+        // text has not arrived yet the request stays pending, so the list can
+        // pass through intermediate recomputations without losing it.
         const restore = restoreAnchorRef.current;
         if (restore) {
             const landed = matches.findIndex(
-                match => match.segmentId === restore.segmentId && match.from === restore.from,
+                match =>
+                    match.source === restore.source
+                    && (restore.source === 'transcript'
+                        ? match.segmentId === restore.containerId
+                        : match.blockId === restore.containerId)
+                    && match.from === restore.from,
             );
             if (landed >= 0) {
                 restoreAnchorRef.current = null;
@@ -352,12 +387,24 @@ export function useFindReplace({
         if (anchor) {
             advanceAnchorRef.current = null;
             settledMatchesRef.current = matches;
-            const orderOf = new Map(segments.map((segment, index) => [segment.id, index]));
-            const anchorOrder = orderOf.get(anchor.segmentId) ?? -1;
+            // Display order within a source: segments top to bottom, blocks
+            // top to bottom (the same order the match list is built in).
+            const orderOf = new Map<string, number>();
+            segments.forEach((segment, index) => orderOf.set(`transcript:${segment.id}`, index));
+            (summaryBlocks ?? []).forEach((block, index) => orderOf.set(`summary:${block.blockId}`, index));
+            const sourceRank = (source: FindMatchSource) => (source === 'transcript' ? 0 : 1);
+            const anchorRank = sourceRank(anchor.source);
+            const anchorOrder = orderOf.get(`${anchor.source}:${anchor.containerId}`) ?? -1;
             let next = matches.findIndex(match => {
-                if (match.segmentId === undefined) return false;
-                if (match.segmentId !== anchor.segmentId) {
-                    return (orderOf.get(match.segmentId) ?? -1) > anchorOrder;
+                const matchRank = sourceRank(match.source);
+                if (matchRank !== anchorRank) {
+                    // The combined list is transcript-first: any match of the
+                    // later source is after anything in this source.
+                    return matchRank > anchorRank;
+                }
+                const containerId = match.source === 'transcript' ? match.segmentId : match.blockId;
+                if (containerId !== anchor.containerId) {
+                    return (orderOf.get(`${match.source}:${containerId}`) ?? -1) > anchorOrder;
                 }
                 return match.from >= anchor.to;
             });
@@ -372,7 +419,7 @@ export function useFindReplace({
             settledMatchesRef.current = matches;
             setActiveIndex(matches.length > 0 ? 0 : -1);
         }
-    }, [matches, segments, advanceNonce]);
+    }, [matches, segments, summaryBlocks, advanceNonce]);
 
     const openPanel = useCallback((options?: { focus?: 'search' | 'replace' }) => {
         setOpen(true);
@@ -424,15 +471,55 @@ export function useFindReplace({
         return text.slice(0, match.from) + replacement + text.slice(match.to);
     }, []);
 
-    // Replace the active match through the host's segment-save path — the same
-    // optimistic update, persistence and rollback an inline row edit uses — and
-    // only then advance. A rejected save leaves the position alone: the host
-    // rolls the row back, the match list recomputes from the actual text, and
-    // the user sees the match they could not replace still in front of them.
+    // Replace the active match through the host that owns its text — the
+    // segment-save path for the transcript (the same optimistic update,
+    // persistence and rollback an inline row edit uses), the summary-replace
+    // path for the summary (the editor applies the range inside one
+    // transaction) — and only then advance. A rejected save leaves the
+    // position alone: the host rolls the row back (or skipped the edit
+    // because the text changed under it), the match list recomputes from the
+    // actual text, and the user sees the match they could not replace still
+    // in front of them.
     const replaceActive = useCallback(async () => {
-        if (!onTextEdited || matches.length === 0 || replaceInFlightRef.current) return;
+        if (matches.length === 0 || replaceInFlightRef.current) return;
         const match = matches[activeIndex];
-        if (!match || match.source !== 'transcript' || !match.segmentId) return;
+        if (!match) return;
+
+        if (match.source === 'summary') {
+            if (!onSummaryReplace || !match.blockId) return;
+            const block = (summaryBlocks ?? []).find(item => item.blockId === match.blockId);
+            if (!block) return;
+            const expected = block.text.slice(match.from, match.to);
+            if (expected === replaceText) {
+                // The replacement changes nothing: no edit for a no-op — but
+                // advance, so repeated «Заменить» still walks the list.
+                advanceAnchorRef.current = { source: 'summary', containerId: match.blockId, to: match.to };
+                setAdvanceNonce(nonce => nonce + 1);
+                return;
+            }
+            replaceInFlightRef.current = true;
+            let skipped = false;
+            try {
+                skipped = (await onSummaryReplace([
+                    { blockId: match.blockId, from: match.from, to: match.to, expected, replacement: replaceText },
+                ])) === false;
+            } finally {
+                replaceInFlightRef.current = false;
+            }
+            if (skipped) {
+                // The host applied nothing (stale range): face the match that
+                // is still there, like a rolled-back segment save.
+                restoreAnchorRef.current = { source: 'summary', containerId: match.blockId, from: match.from };
+                setAdvanceNonce(nonce => nonce + 1);
+                return;
+            }
+            restoreAnchorRef.current = null;
+            advanceAnchorRef.current = { source: 'summary', containerId: match.blockId, to: match.to };
+            setAdvanceNonce(nonce => nonce + 1);
+            return;
+        }
+
+        if (!onTextEdited || !match.segmentId) return;
         const segment = segments.find(item => item.id === match.segmentId);
         if (!segment) return;
 
@@ -441,7 +528,7 @@ export function useFindReplace({
             // The replacement changes nothing (e.g. the field repeats the
             // query): like the row editor, no save for a no-op — but advance,
             // so repeated «Заменить» still walks the list.
-            advanceAnchorRef.current = { segmentId: match.segmentId, to: match.to };
+            advanceAnchorRef.current = { source: 'transcript', containerId: match.segmentId, to: match.to };
             setAdvanceNonce(nonce => nonce + 1);
             return;
         }
@@ -455,7 +542,7 @@ export function useFindReplace({
             // optimistic rewrite may have moved the active position in the
             // meantime). Rethrow so the panel can toast the failure the way
             // the row editor toasts its own.
-            restoreAnchorRef.current = { segmentId: match.segmentId, from: match.from };
+            restoreAnchorRef.current = { source: 'transcript', containerId: match.segmentId, from: match.from };
             setAdvanceNonce(nonce => nonce + 1);
             throw error;
         } finally {
@@ -463,34 +550,55 @@ export function useFindReplace({
         }
         // Success: any stale rollback request from an earlier failure is moot.
         restoreAnchorRef.current = null;
-        advanceAnchorRef.current = { segmentId: match.segmentId, to: match.to };
+        advanceAnchorRef.current = { source: 'transcript', containerId: match.segmentId, to: match.to };
         setAdvanceNonce(nonce => nonce + 1);
-    }, [activeIndex, applyReplacement, matches, onTextEdited, replaceText, segments]);
+    }, [activeIndex, applyReplacement, matches, onSummaryReplace, onTextEdited, replaceText, segments, summaryBlocks]);
 
-    // Replace every match in every loaded segment in one action: the plan is
-    // built once from the current match list, so each changed segment gets a
-    // single save with all its ranges spliced out at once. Saves go one after
-    // another (never in parallel) because each is an independent optimistic
-    // write the host can roll back on its own; a rejected segment leaves its
-    // text untouched and only that segment's matches survive the recompute.
+    // Replace every match in one action: the plan is built once from the
+    // current match list, so each changed segment gets a single save with all
+    // its ranges spliced out at once, and every summary edit goes to the
+    // host in ONE call it applies as a single editor transaction. Transcript
+    // saves go one after another (never in parallel) because each is an
+    // independent optimistic write the host can roll back on its own; a
+    // rejected segment leaves its text untouched and only that segment's
+    // matches survive the recompute. A summary call that the host skips
+    // (stale text under a range) is not a save failure — nothing was written
+    // and the survivors simply stay in the recomputed list.
     const replaceAll = useCallback(async () => {
-        if (!onTextEdited || matches.length === 0 || replaceInFlightRef.current) return;
+        if (matches.length === 0 || replaceInFlightRef.current) return;
 
         const textById = new Map(segments.map(segment => [segment.id, segment.text]));
         const planned = new Map<string, string>();
-        for (const match of matches) {
-            if (match.source !== 'transcript' || !match.segmentId) continue;
-            const current = planned.get(match.segmentId) ?? textById.get(match.segmentId);
-            if (current === undefined) continue;
-            const next = applyReplacement(current, match, replaceText);
-            if (next !== current) planned.set(match.segmentId, next);
+        if (onTextEdited) {
+            for (const match of matches) {
+                if (match.source !== 'transcript' || !match.segmentId) continue;
+                const current = planned.get(match.segmentId) ?? textById.get(match.segmentId);
+                if (current === undefined) continue;
+                const next = applyReplacement(current, match, replaceText);
+                if (next !== current) planned.set(match.segmentId, next);
+            }
         }
-        if (planned.size === 0) return;
+
+        const blockTextById = new Map((summaryBlocks ?? []).map(block => [block.blockId, block.text]));
+        const summaryEdits: SummaryReplaceEdit[] = [];
+        if (onSummaryReplace) {
+            for (const match of matches) {
+                if (match.source !== 'summary' || !match.blockId) continue;
+                const text = blockTextById.get(match.blockId);
+                if (text === undefined) continue;
+                const expected = text.slice(match.from, match.to);
+                if (expected === replaceText) continue; // no-op for this match
+                summaryEdits.push({ blockId: match.blockId, from: match.from, to: match.to, expected, replacement: replaceText });
+            }
+        }
+
+        if (planned.size === 0 && summaryEdits.length === 0) return;
 
         replaceInFlightRef.current = true;
         let failures = 0;
         try {
             for (const [segmentId, newText] of planned) {
+                if (!onTextEdited) continue;
                 try {
                     await onTextEdited(segmentId, newText);
                 } catch {
@@ -501,27 +609,36 @@ export function useFindReplace({
                     continue;
                 }
             }
+            if (summaryEdits.length > 0) {
+                // Fire-and-report: the editor applies them as one transaction;
+                // a skip leaves the summary text (and its matches) as they are.
+                await onSummaryReplace?.(summaryEdits);
+            }
         } finally {
             replaceInFlightRef.current = false;
         }
-        // No anchor here: the successful saves changed segment texts, the
-        // match list recomputes, and the ordinary reset lands on the first
-        // remaining match (the only survivors are any a failed segment kept).
+        // No anchor here: the successful saves changed segment and block
+        // texts, the match list recomputes, and the ordinary reset lands on
+        // the first remaining match (the only survivors are any a failed
+        // segment or a skipped block kept).
         if (failures > 0) {
             // The raw per-segment errors (possibly driver-level text) stay in
             // the hook: the count is all the panel needs for its translated
             // toast, so no private content can leak through it.
             throw new ReplaceAllPartialFailureError(failures);
         }
-    }, [applyReplacement, matches, onTextEdited, replaceText, segments]);
+    }, [applyReplacement, matches, onSummaryReplace, onTextEdited, replaceText, segments, summaryBlocks]);
 
     const hasQuery = query.trim().length > 0;
     /**
-     * Matches «Заменить все» can actually replace today (transcript matches;
-     * summary replacement lands with ticket 05), counted in its label.
+     * Matches «Заменить все» can actually replace today, counted in its
+     * label: every transcript match (saved through the segment-edit path)
+     * plus every summary match the host has a replacement path for. A
+     * summary match without a host path would be counted but never replaced,
+     * so it stays out of the number.
      */
     const replaceableCount = matches.reduce(
-        (count, match) => (match.source === 'transcript' ? count + 1 : count),
+        (count, match) => (match.source === 'transcript' || (match.source === 'summary' && onSummaryReplace) ? count + 1 : count),
         0,
     );
 

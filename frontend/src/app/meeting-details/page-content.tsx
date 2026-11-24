@@ -20,6 +20,7 @@ import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
+import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
@@ -183,6 +184,17 @@ export default function PageContent({
   // list over the loaded segments and the summary, and the active position.
   // The first open drains every segment page through the pagination hook so
   // matches cover the whole meeting.
+  // Summary replacement (ticket 05): the summary surface owns the live
+  // editor, so the panel's edits go through its imperative ref — BlockNote
+  // and markdown edit the PM doc in one transaction, legacy splices the
+  // plain block contents through the existing change callback. Nothing here
+  // saves: the editor's own dirty mechanism marks the summary unsaved and
+  // the ordinary save button (saveAllChanges → api_save_meeting_summary)
+  // persists it, so a replace survives a reload exactly like manual typing.
+  const handleSummaryReplace = useCallback(async (edits: SummaryReplaceEdit[]) => {
+    return meetingData.blockNoteSummaryRef.current?.replaceSummary(edits) ?? false;
+  }, [meetingData.blockNoteSummaryRef]);
+
   const findReplace = useFindReplace({
     segments: segments ?? [],
     summaryBlocks,
@@ -193,6 +205,7 @@ export default function PageContent({
     // successful save — replaced segments therefore persist and hint exactly
     // like manually edited rows.
     onTextEdited: handleTranscriptTextEdited,
+    onSummaryReplace: handleSummaryReplace,
   });
   const { openPanel, closePanel } = findReplace;
 
