@@ -48,6 +48,11 @@ function editRequest(transcriptId: string, index = 0) {
   expect(result).toBeDefined();
   return result;
 }
+function deleteRequest(meetingId: string, index = 0) {
+  const result = requests.filter(r => r.command === 'api_delete_transcripts' && r.args.meetingId === meetingId)[index];
+  expect(result).toBeDefined();
+  return result;
+}
 const metadata = (id: string): MeetingMetadata => ({ id, title: id, created_at: '2026-09-07', updated_at: '2026-09-07' });
 const page = (text: string, hasMore = false): PaginatedTranscriptsResponse => ({
   transcripts: [{ id: text, text, timestamp: '00:00', audio_start_time: 0 }],
@@ -240,6 +245,117 @@ describe('paginated transcript request ownership', () => {
 
     expect(state.segments[0].text).toBe('A');
     expect(String(failure)).toContain('cannot be empty');
+  });
+
+  // --- segment deletion (ticket 01) ---------------------------------------
+  //
+  // The delete method is the single path both the hover trash (single) and
+  // the bulk toolbar (ticket 02) use, so it takes a list of ids from the
+  // start. The tests below pin the optimistic removal, the rollback, the
+  // totalCount/has_more honesty and the offset correction that keeps
+  // loadMore from skipping shifted-in rows.
+
+  const row = (id: string, start: number) => ({
+    id, text: id, timestamp: '00:00', audio_start_time: start,
+  });
+  // `startAt` keeps every row's audio_start_time unique across pages, so the
+  // hook's sort order (and the assertions) follow the load order.
+  const manyPage = (ids: string[], total: number, hasMore: boolean, startAt = 0): PaginatedTranscriptsResponse => ({
+    transcripts: ids.map((id, index) => row(id, startAt + index)),
+    total_count: total, has_more: hasMore,
+  });
+
+  test('a delete removes the row from the segments before the backend answers', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2', 't3'], 3, false));
+
+    await act(async () => { void state.deleteTranscripts(['t2']); });
+
+    // The optimistic value lands while the delete is still open.
+    expect(state.segments.map(s => s.id)).toEqual(['t1', 't3']);
+    expect(state.totalCount).toBe(2);
+    await resolve(deleteRequest('A'), { message: 'Transcript segments deleted successfully' });
+    expect(state.segments.map(s => s.id)).toEqual(['t1', 't3']);
+  });
+
+  test('the delete command carries the meeting and the requested ids', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2', 't3'], 3, false));
+
+    await act(async () => { void state.deleteTranscripts(['t1', 't3']); });
+
+    expect(deleteRequest('A').args).toEqual({ meetingId: 'A', ids: ['t1', 't3'] });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+  });
+
+  test('a rejected delete rolls the rows and the counter back', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2', 't3'], 3, false));
+
+    let failure: unknown = null;
+    await act(async () => {
+      void state.deleteTranscripts(['t1', 't3']).catch(error => { failure = error; });
+    });
+    expect(state.segments.map(s => s.id)).toEqual(['t2']);
+    expect(state.totalCount).toBe(1);
+
+    await act(async () => { deleteRequest('A').reject(new Error('transcript not found: t3')); });
+
+    // Rows return in their original order and the counter recovers, so the
+    // page never diverges from the database after a failed delete.
+    expect(state.segments.map(s => s.id)).toEqual(['t1', 't2', 't3']);
+    expect(state.totalCount).toBe(3);
+    expect(String(failure)).toContain('transcript not found');
+  });
+
+  test('after a delete the has-more flag stays honest', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    // The server said "more" at a total this page already covers; after the
+    // delete, loadedCount === totalCount, so has_more must drop.
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 2, true));
+    expect(state.hasMore).toBe(true);
+
+    await act(async () => { void state.deleteTranscripts(['t1']); });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    expect(state.totalCount).toBe(1);
+    expect(state.loadedCount).toBe(1);
+    expect(state.hasMore).toBe(false);
+  });
+
+  test('after a delete the next page continues where the rows shifted to', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 4, true));
+
+    await act(async () => { void state.deleteTranscripts(['t1']); });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    await act(async () => { void state.loadMore(); });
+    const second = request('transcripts', 'A', 1);
+    // One loaded row was removed, so the server window moved back by one:
+    // asking for the stale offset 2 would silently skip the row that slid in.
+    expect(second.args.offset).toBe(1);
+    await resolve(second, manyPage(['t3', 't4'], 4, false, 2));
+    expect(state.transcripts.map(t => t.id)).toEqual(['t2', 't3', 't4']);
+  });
+
+  test('a late delete response cannot touch a newly selected meeting', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 2, false));
+
+    await act(async () => { void state.deleteTranscripts(['t1']).catch(() => {}); });
+    const deleteReq = deleteRequest('A');
+    await load('B');
+    await act(async () => { deleteReq.reject(new Error('late failure')); });
+
+    expect(state.segments.map(s => s.id)).toEqual(['B']);
+    expect(state.totalCount).toBe(1);
   });
 
   test('the metadata keeps the meeting moment the header renders', async () => {

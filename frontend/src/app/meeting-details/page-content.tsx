@@ -22,6 +22,7 @@ import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscr
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
+import { useRetranscriptionRunning } from '@/hooks/useRetranscriptionRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
 export default function PageContent({
@@ -43,6 +44,7 @@ export default function PageContent({
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
+  onSegmentDeleted,
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
@@ -65,6 +67,8 @@ export default function PageContent({
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
   /** A row's saved text edit, applied to the pagination state by the page. */
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+  /** A row's segment delete, applied optimistically by the pagination hook. */
+  onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
 }) {
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
@@ -79,6 +83,10 @@ export default function PageContent({
   // a pass runs for this meeting, inline text editing closes too, so the two
   // surfaces block and unblock together.
   const isDiarizing = useDiarizationPassRunning(meeting?.id);
+  // The retranscription rewrites the whole transcript from the audio: the
+  // hover trash closes while it runs, exactly like editing closes for the
+  // diarization pass (spec: delete gates = edit gates plus retranscription).
+  const isRetranscribing = useRetranscriptionRunning(meeting?.id);
   const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
@@ -161,6 +169,16 @@ export default function PageContent({
     await onTextEdited?.(transcriptId, text);
     notifySummaryStale();
   }, [onTextEdited, notifySummaryStale]);
+
+  // A delete removes rows the summary was built from, so it makes an existing
+  // summary stale exactly like an edit does. The hint fires only after the
+  // delete resolves: a rejection propagates to the row (its toast) and skips
+  // the hint. The bulk toolbar (ticket 02/05) reuses this same callback chain
+  // so the hint stays single and id-deduped.
+  const handleSegmentDeleted = useCallback(async (transcriptId: string) => {
+    await onSegmentDeleted?.(transcriptId);
+    notifySummaryStale();
+  }, [onSegmentDeleted, notifySummaryStale]);
 
   const copyOperations = useCopyOperations({
     meeting,
@@ -333,7 +351,9 @@ export default function PageContent({
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
               onTextEdited={handleTranscriptTextEdited}
+              onSegmentDeleted={handleSegmentDeleted}
               isDiarizing={isDiarizing}
+              isRetranscribing={isRetranscribing}
               onOpenFind={() => openPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}

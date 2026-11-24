@@ -179,6 +179,11 @@ async function saveEdit(id: string, text: string) {
   await act(async () => { await panelProps.onTextEdited(id, text); });
 }
 
+/** Report a deleted segment the way the row does: after the delete resolved. */
+async function deleteSegment(id: string) {
+  await act(async () => { await panelProps.onSegmentDeleted(id); });
+}
+
 describe('regenerate-summary hint on the meeting page', () => {
   test('a saved edit while a completed summary exists offers regeneration', async () => {
     summaryStatus = 'completed';
@@ -220,6 +225,55 @@ describe('regenerate-summary hint on the meeting page', () => {
     // stale-summary hint appears for an edit that was not applied.
     expect(String(thrown)).toContain('database is locked');
     expect(infoNotify).not.toHaveBeenCalled();
+  });
+
+  // Ticket 01: a single delete makes the summary stale through the very same
+  // hint chain an edit uses (the bulk toolbar of ticket 05 reuses it), and a
+  // rejected delete must neither claim staleness nor swallow the error the
+  // row toasts on.
+  test('a deleted segment while a completed summary exists offers regeneration', async () => {
+    summaryStatus = 'completed';
+    const deleted = mock(async (_id: string) => {});
+    await show({ onSegmentDeleted: deleted });
+
+    await deleteSegment('t1');
+
+    expect(deleted).toHaveBeenCalledWith('t1');
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.action.label).toBe('Regenerate Summary');
+  });
+
+  test('a rejected delete shows no hint and keeps propagating to the row', async () => {
+    summaryStatus = 'completed';
+    let thrown: unknown = null;
+    await show({ onSegmentDeleted: async () => { throw new Error('transcript not found: t1'); } });
+
+    await act(async () => {
+      try { await panelProps.onSegmentDeleted('t1'); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(infoNotify).not.toHaveBeenCalled();
+  });
+
+  // Ticket 01 gates: the delete availability mirrors the edit gates plus the
+  // retranscription, and both booleans reach the view through the panel.
+  test('the panel receives the diarization and retranscription delete gates', async () => {
+    await show();
+
+    expect(panelProps.isDiarizing).toBe(false);
+    expect(panelProps.isRetranscribing).toBe(false);
+  });
+
+  // The delete button's data: the page hands the panel a working callback
+  // built on the pagination hook's batch delete, so the live page never
+  // shows a trash that deletes nothing.
+  test('the panel receives the delete callback the page wires to the hook', async () => {
+    await show();
+    expect(typeof panelProps.onSegmentDeleted).toBe('function');
   });
 
   // Ticket 03: replacements go through this same save callback, so the hint

@@ -39,8 +39,12 @@ interface TranscriptPanelProps {
 
   // Inline text editing of a saved row (meeting page only)
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+  /** Single-segment delete of a saved row (meeting page only). */
+  onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
   /** Whether a diarization pass runs for this meeting; closes text editing. */
   isDiarizing?: boolean;
+  /** Whether a retranscription runs for this meeting; closes segment deletion. */
+  isRetranscribing?: boolean;
 
   // Find & replace (meeting page only): opens the floating panel and drives
   // the row highlights through the virtualized view.
@@ -72,7 +76,9 @@ export function TranscriptPanel({
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
+  onSegmentDeleted,
   isDiarizing,
+  isRetranscribing,
   onOpenFind,
   findOpen,
   findMatches,
@@ -131,7 +137,9 @@ export function TranscriptPanel({
           meetingSpeakers={meetingSpeakers}
           onSpeakerChange={onSpeakerChanged}
           onTextEdited={onTextEdited}
+          onSegmentDeleted={onSegmentDeleted}
           isDiarizing={isDiarizing}
+          isRetranscribing={isRetranscribing}
           findOpen={findOpen}
           findMatches={findMatches}
           findActiveIndex={findActiveIndex}
