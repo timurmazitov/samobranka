@@ -975,6 +975,9 @@
     },
     "diarization": {
       "failed": "Diarization failed"
+    },
+    "transcriptEdit": {
+      "summaryOutdated": "The summary no longer matches your edited transcript."
     }
   },
   "speakers": {
