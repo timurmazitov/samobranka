@@ -54,6 +54,7 @@ function MeetingDetailsContent() {
     refetchMetadata,
     setTranscriptSpeaker,
     setTranscriptText,
+    deleteTranscripts,
     error: transcriptError,
   } = usePaginatedTranscripts({ meetingId: meetingId || '' });
 
@@ -103,6 +104,36 @@ function MeetingDetailsContent() {
   const handleTextEdited = useCallback(async (transcriptId: string, text: string) => {
     await setTranscriptText(transcriptId, text);
   }, [setTranscriptText]);
+
+  // A delete — single (the row's trash) or bulk (ticket 02, one batch
+  // command over the selected ids) — removes rows and can empty a speaker's
+  // last segment, so the speaker list (labels, counts, names) reloads
+  // together with the deletion: the reconcile inside the command already
+  // dropped dead bindings in the database, and this read makes the panel and
+  // chips follow immediately. The names-reset event covers the "every name
+  // vanished" case separately. The bulk shape adds a window refetch
+  // (`refetchWindow`) so offset pagination never skips the rows that slid
+  // into the deleted ones' places. A rejection propagates to the caller (the
+  // row's toast; page-content keeps the selection and the view toasts); the
+  // refresh is only meaningful after a successful delete.
+  const handleSegmentsDeleted = useCallback(async (
+    transcriptIds: string[],
+    { refetchWindow = false }: { refetchWindow?: boolean } = {},
+  ) => {
+    await deleteTranscripts(transcriptIds, { refetchWindow });
+    await loadMeetingSpeakers();
+  }, [deleteTranscripts, loadMeetingSpeakers]);
+  // The two view props stay separate (the row's trash and the selection
+  // toolbar call them differently); both are stable one-liners over the one
+  // delete path above, so their identities never churn.
+  const handleSegmentDeleted = useCallback(
+    (transcriptId: string) => handleSegmentsDeleted([transcriptId]),
+    [handleSegmentsDeleted],
+  );
+  const handleSegmentsBulkDeleted = useCallback(
+    (transcriptIds: string[]) => handleSegmentsDeleted(transcriptIds, { refetchWindow: true }),
+    [handleSegmentsDeleted],
+  );
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {
@@ -373,6 +404,8 @@ function MeetingDetailsContent() {
     meetingSpeakers={meetingSpeakers}
     onSpeakerChanged={handleSpeakerChanged}
     onTextEdited={handleTextEdited}
+    onSegmentDeleted={handleSegmentDeleted}
+    onSegmentsBulkDeleted={handleSegmentsBulkDeleted}
     // Pagination props for efficient transcript loading
     segments={segments}
     hasMore={hasMore}

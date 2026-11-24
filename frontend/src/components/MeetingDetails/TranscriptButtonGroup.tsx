@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, Download, FolderOpen, RefreshCw, Search, Users } from 'lucide-react';
+import { Copy, Download, FolderOpen, RefreshCw, Search, SquareCheck, Users } from 'lucide-react';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { SpeakersPanel } from './SpeakersPanel';
 import type { DiarizationClient } from '@/lib/diarization';
@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import '@/i18n';
 
 
-interface TranscriptButtonGroupProps {
+export interface TranscriptButtonGroupProps {
   transcriptCount: number;
   onCopyTranscript: () => void;
   onExportTranscript: () => void;
@@ -22,6 +22,21 @@ interface TranscriptButtonGroupProps {
   onRefetchTranscripts?: () => Promise<void>;
   /** Opens the floating find & replace panel (meeting page). Absent elsewhere. */
   onOpenFind?: () => void;
+  /**
+   * Bulk selection mode (ticket 02): present on the meeting page only, so
+   * the «Выделение» toggle appears there and never on the live page. The
+   * owner (page-content) keeps the id set; the group only flips the mode.
+   */
+  onToggleSelection?: () => void;
+  /** Whether the selection mode is currently on (drives the active style). */
+  selectionMode?: boolean;
+  /**
+   * The delete gates (spec: selection shares single delete's gates). The
+   * meeting page passes all three; any one of them disables the toggle.
+   */
+  isRecording?: boolean;
+  isDiarizing?: boolean;
+  isRetranscribing?: boolean;
   /** Panel seams, forwarded so component tests can inject fakes. */
   diarizationClient?: DiarizationClient;
   diarizationModelClient?: Pick<AudioCppModelClient, 'getAvailableModels'> &
@@ -38,6 +53,11 @@ export function TranscriptButtonGroup({
   meetingFolderPath,
   onRefetchTranscripts,
   onOpenFind,
+  onToggleSelection,
+  selectionMode = false,
+  isRecording = false,
+  isDiarizing = false,
+  isRetranscribing = false,
   diarizationClient,
   diarizationModelClient,
 }: TranscriptButtonGroupProps) {
@@ -134,6 +154,25 @@ export function TranscriptButtonGroup({
             aria-label={t('findReplace.openTooltip')}
           >
             <Search size={18} />
+          </Button>
+        )}
+
+        {/* Bulk selection mode (ticket 02), next to Find. Same shape as the
+            Find toggle; the mode's gates are single delete's gates (spec), so
+            recording/diarization/retranscription disable it. The active mode
+            reads as a filled button among the group's outline buttons. */}
+        {onToggleSelection && (
+          <Button
+            size="sm"
+            variant={selectionMode ? 'secondary' : 'outline'}
+            className="px-2"
+            onClick={onToggleSelection}
+            disabled={isRecording || isDiarizing || isRetranscribing}
+            title={t('transcript.selectModeTooltip')}
+            aria-label={t('transcript.selectModeTooltip')}
+            aria-pressed={selectionMode}
+          >
+            <SquareCheck size={18} />
           </Button>
         )}
       </ButtonGroup>

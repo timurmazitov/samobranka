@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { MeetingSpeaker, MeetingSummary, SummaryProcessResponse } from '@/types';
@@ -19,10 +19,35 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useTranscriptSelection } from '@/hooks/meeting-details/useTranscriptSelection';
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
+import { useRetranscriptionRunning } from '@/hooks/useRetranscriptionRunning';
 import { useConfig } from '@/contexts/ConfigContext';
+
+// The selection Delete key (ticket 03) must never eat a keystroke meant for
+// typing: the inline row editor, the find panel's inputs and the prompt
+// textarea all live inside this page's DOM. Like the row editor's Escape
+// claim, a focused editable target answers for itself.
+function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as {
+    tagName?: string;
+    type?: string;
+    isContentEditable?: boolean;
+  } | null;
+  if (!element) return false;
+  if (element.isContentEditable === true) return true;
+  const tag = element.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') {
+    // A checkbox the user just clicked is not a typing field (and Delete is
+    // inert on it anyway); every text-ish input type is.
+    const nonTextTypes = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'];
+    return !nonTextTypes.includes(element.type ?? 'text');
+  }
+  return false;
+}
 
 export default function PageContent({
   meeting,
@@ -43,6 +68,8 @@ export default function PageContent({
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
+  onSegmentDeleted,
+  onSegmentsBulkDeleted,
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
@@ -65,6 +92,15 @@ export default function PageContent({
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
   /** A row's saved text edit, applied to the pagination state by the page. */
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+  /** A row's segment delete, applied optimistically by the pagination hook. */
+  onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+  /**
+   * Bulk delete of the selected segments (ticket 02): the page's owner wires
+   * this to the pagination hook's batch delete (with the current-window
+   * refetch) plus the speaker reload. The view owns the confirmation and the
+   * failure toast; the error rethrows so neither claims success.
+   */
+  onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
 }) {
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
@@ -79,6 +115,10 @@ export default function PageContent({
   // a pass runs for this meeting, inline text editing closes too, so the two
   // surfaces block and unblock together.
   const isDiarizing = useDiarizationPassRunning(meeting?.id);
+  // The retranscription rewrites the whole transcript from the audio: the
+  // hover trash closes while it runs, exactly like editing closes for the
+  // diarization pass (spec: delete gates = edit gates plus retranscription).
+  const isRetranscribing = useRetranscriptionRunning(meeting?.id);
   const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
@@ -162,6 +202,75 @@ export default function PageContent({
     notifySummaryStale();
   }, [onTextEdited, notifySummaryStale]);
 
+  // A delete removes rows the summary was built from, so it makes an existing
+  // summary stale exactly like an edit does. The hint fires only after the
+  // delete resolves: a rejection propagates to the row (its toast) and skips
+  // the hint. The bulk toolbar (ticket 02/05) reuses this same callback chain
+  // so the hint stays single and id-deduped.
+  const handleSegmentDeleted = useCallback(async (transcriptId: string) => {
+    await onSegmentDeleted?.(transcriptId);
+    notifySummaryStale();
+  }, [onSegmentDeleted, notifySummaryStale]);
+
+  // Bulk selection mode (ticket 02). The page owns the ephemeral id set —
+  // like it owns the find panel's state — because the view is shared with
+  // the live recording page. Ticket 04 wires both exclusivity directions
+  // through the callbacks below, next to the find hook.
+  const selection = useTranscriptSelection(meeting?.id);
+  const {
+    setSelectedIds: setSelectedSegments,
+    toggleSelection,
+    exitSelection,
+    toggleAllVisible: toggleAllVisibleSegments,
+    rangeSelectTo: rangeSelectToSegment,
+  } = selection;
+
+  // After a successful batch the deleted ids are gone, so the selection
+  // empties while the mode stays open for further cleaning; a rejection
+  // keeps the selection intact so the user can retry after the rollback.
+  // A batch delete removes rows the summary was built from, so it makes an
+  // existing summary stale exactly like an edit or a single delete (ticket
+  // 05): one hint per batch through the same id-deduped chain, only after
+  // the batch resolves — a rejection propagates to the toolbar (its toast)
+  // and skips the hint.
+  const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
+    await onSegmentsBulkDeleted?.(transcriptIds);
+    setSelectedSegments([]);
+    notifySummaryStale();
+  }, [onSegmentsBulkDeleted, setSelectedSegments, notifySummaryStale]);
+
+  // Ticket 03's assistants. «Выделить всё видимое» is a toggle over the
+  // LOADED segments (the second press clears); by-speaker filters the same
+  // loaded window by the diarization label — never the panel's whole-meeting
+  // segment_count, which would inflate «Удалить (N)» past what the batch
+  // command can actually delete. Loaded order is the pagination hook's
+  // audio-time order, so Shift ranges follow what the user sees.
+  const loadedSegments = useMemo(() => segments ?? [], [segments]);
+  const loadedIds = useMemo(
+    () => loadedSegments.map(segment => segment.id as string),
+    [loadedSegments],
+  );
+  const handleSelectAllVisible = useCallback(() => {
+    toggleAllVisibleSegments(loadedIds);
+  }, [toggleAllVisibleSegments, loadedIds]);
+  const handleSelectBySpeaker = useCallback((label: string) => {
+    setSelectedSegments(
+      loadedSegments
+        .filter(segment => segment.speaker === label)
+        .map(segment => segment.id as string),
+    );
+  }, [setSelectedSegments, loadedSegments]);
+  const handleRowRangeSelect = useCallback((transcriptId: string) => {
+    rangeSelectToSegment(transcriptId, loadedIds);
+  }, [rangeSelectToSegment, loadedIds]);
+
+  // Delete-key seam (ticket 03): the page's single keydown listener cannot
+  // own the confirmation — the N>1 dialog and the failure toast live in the
+  // view with the «Удалить (N)» button. A nonce instead asks the view to
+  // press that very button (FindReplacePanel's focusNonce pattern), so the
+  // keyboard and the click can never diverge.
+  const [bulkDeleteNonce, setBulkDeleteNonce] = useState(0);
+
   const copyOperations = useCopyOperations({
     meeting,
     transcripts: meetingData.transcripts,
@@ -209,6 +318,26 @@ export default function PageContent({
   });
   const { openPanel, closePanel } = findReplace;
 
+  // Mode exclusivity over the transcript rows (ticket 04): at most one bulk
+  // mode at a time. Entering the selection mode closes the find panel here;
+  // an open inline editor needs no page action — the view's selectionMode
+  // effect (the allowTextEdit-flip precedent in VirtualizedTranscriptView)
+  // flushes its draft through the host save path and closes it. Symmetrically
+  // every find entry point — both panel buttons and the Ctrl+F/H hotkeys
+  // below — leaves the mode and drops the ids, and so does the pencil, via
+  // the view's onExitSelection. No state ever shows checkboxes, an editor and
+  // the highlights together.
+  const toggleSelectionMode = useCallback(() => {
+    // Closing the (already closed, by exclusivity) panel on the way out is a
+    // no-op; on the way in it disarms find.
+    toggleSelection();
+    closePanel();
+  }, [toggleSelection, closePanel]);
+  const openFindPanel = useCallback((options?: { focus?: 'search' | 'replace' }) => {
+    exitSelection();
+    openPanel(options);
+  }, [exitSelection, openPanel]);
+
   // Navigation follows the active match across the split view: a summary
   // match reveals the summary tab, a transcript match the transcript tab.
   // The tab is only ever moved while the panel is open, and the manual
@@ -242,20 +371,43 @@ export default function PageContent({
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         if (event.code === 'KeyF' || event.key === 'f' || event.key === 'F') {
           event.preventDefault();
-          openPanel({ focus: 'search' });
+          openFindPanel({ focus: 'search' });
         } else if (event.code === 'KeyH' || event.key === 'h' || event.key === 'H') {
           event.preventDefault();
-          openPanel({ focus: 'replace' });
+          openFindPanel({ focus: 'replace' });
         }
       } else if (event.key === 'Escape' && !event.defaultPrevented) {
+        // The selection mode owns Escape while it is open: it exits the mode
+        // (clearing the id set) and CLAIMS the event, so the find panel's
+        // closer below never sees it. The row editor's Escape claims earlier
+        // still — the same defaultPrevented contract the panel relies on.
+        if (selection.isSelecting) {
+          event.preventDefault();
+          exitSelection();
+          return;
+        }
         // A row editor's Escape cancels the edit and marks the event handled;
         // only an unclaimed Escape closes the panel.
         closePanel();
+      } else if (
+        event.key === 'Delete'
+        && !event.defaultPrevented
+        && selection.isSelecting
+        && selection.selectedCount > 0
+      ) {
+        // Delete removes the selection through the very same button path.
+        // The spec names the Delete key only — Backspace stays a
+        // text-editing/browser-undo key and is left to the webview. A
+        // focused text field owns the key (the inline editor, the find
+        // inputs): the selection never eats a typing keystroke.
+        if (isTypingTarget(event.target)) return;
+        event.preventDefault();
+        setBulkDeleteNonce(nonce => nonce + 1);
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [openPanel, closePanel]);
+  }, [openFindPanel, closePanel, selection.isSelecting, selection.selectedCount, exitSelection]);
 
   useEffect(() => {
     if (
@@ -333,8 +485,20 @@ export default function PageContent({
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
               onTextEdited={handleTranscriptTextEdited}
+              onSegmentDeleted={handleSegmentDeleted}
               isDiarizing={isDiarizing}
-              onOpenFind={() => openPanel({ focus: 'search' })}
+              isRetranscribing={isRetranscribing}
+              selectionMode={selection.isSelecting}
+              onToggleSelection={toggleSelectionMode}
+              selectedIds={selection.selectedIds}
+              onToggleSelected={selection.toggleSelected}
+              onSegmentsBulkDeleted={handleSegmentsBulkDeleted}
+              onExitSelection={exitSelection}
+              onSelectAllVisible={handleSelectAllVisible}
+              onSelectBySpeaker={handleSelectBySpeaker}
+              onRowRangeSelect={handleRowRangeSelect}
+              bulkDeleteNonce={bulkDeleteNonce}
+              onOpenFind={() => openFindPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}
               findActiveIndex={findReplace.activeIndex}
@@ -371,7 +535,7 @@ export default function PageContent({
               onTemplateSelect={templates.handleTemplateSelection}
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={handleRegisterModalOpen}
-              onOpenFind={() => openPanel({ focus: 'search' })}
+              onOpenFind={() => openFindPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}
               findActiveIndex={findReplace.activeIndex}

@@ -1,8 +1,10 @@
 use crate::api::{TranscriptSearchResult, TranscriptSegment};
 use crate::database::meeting_facts::usable_duration_seconds;
+use crate::database::repositories::speaker::{self, ReconcileOutcome};
 use chrono::Utc;
 use sqlx::{Connection, Error as SqlxError, SqlitePool};
 use log::{error, info};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Errors of the transcript-row commands. `Display` messages are user-facing
@@ -12,6 +14,10 @@ use uuid::Uuid;
 pub enum TranscriptError {
     /// The edited text is empty or whitespace-only after normalization.
     EmptyText,
+    /// The batch names a meeting that does not exist.
+    MeetingNotFound(String),
+    /// A requested segment id does not exist or belongs to another meeting.
+    /// The payload is the id — never any transcript content.
     TranscriptNotFound(String),
     Database(SqlxError),
 }
@@ -20,6 +26,7 @@ impl std::fmt::Display for TranscriptError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TranscriptError::EmptyText => write!(f, "transcript text cannot be empty"),
+            TranscriptError::MeetingNotFound(id) => write!(f, "meeting not found: {id}"),
             TranscriptError::TranscriptNotFound(id) => write!(f, "transcript not found: {id}"),
             TranscriptError::Database(error) => write!(f, "{error}"),
         }
@@ -246,6 +253,104 @@ impl TranscriptsRepository {
             .collect();
 
         Ok(results)
+    }
+
+    /// Deletes a batch of the meeting's speech segments in one transaction:
+    /// the meeting must exist, every id must belong to it (an unknown or
+    /// foreign id rejects the whole batch — there is no partial delete), the
+    /// meeting's `updated_at` bumps like a text edit does, and the speaker
+    /// assignments are reconciled once so a label whose last segment went
+    /// away loses its binding and any orphaned directory person with it. The
+    /// caller emits the names-reset hint from the outcome after the commit
+    /// (see the retranscription and diarization call sites).
+    ///
+    /// The batch takes a list from the start: the single-delete button and the
+    /// bulk toolbar share this one command. Duplicate ids are deduplicated
+    /// and an empty batch is a no-op (an `IN ()` is invalid SQL). `Display`
+    /// of the error carries ids only, never transcript content.
+    pub async fn delete_batch(
+        pool: &SqlitePool,
+        meeting_id: &str,
+        ids: &[String],
+    ) -> Result<ReconcileOutcome, TranscriptError> {
+        // An empty batch deletes nothing and edits nothing: the honest
+        // answer is a quiet success, not a failed query.
+        if ids.is_empty() {
+            return Ok(ReconcileOutcome::default());
+        }
+        if meeting_id.trim().is_empty() {
+            return Err(TranscriptError::MeetingNotFound(meeting_id.to_string()));
+        }
+
+        let mut seen = HashSet::new();
+        let unique_ids: Vec<&String> = ids.iter().filter(|id| seen.insert(id.as_str())).collect();
+
+        let mut conn = pool.acquire().await?;
+        let mut transaction = conn.begin().await?;
+
+        let meeting_exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM meetings WHERE id = ?")
+            .bind(meeting_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+        if meeting_exists.is_none() {
+            transaction.rollback().await?;
+            return Err(TranscriptError::MeetingNotFound(meeting_id.to_string()));
+        }
+
+        // Ownership of the whole batch in one statement: the rows the meeting
+        // owns are compared against the request, so any unknown or foreign id
+        // rejects everything.
+        let ownership_sql =
+            Self::in_statement("SELECT id FROM transcripts WHERE meeting_id = ? AND id IN ", unique_ids.len());
+        let mut ownership = sqlx::query_as::<_, (String,)>(&ownership_sql).bind(meeting_id);
+        for id in &unique_ids {
+            ownership = ownership.bind(id);
+        }
+        let owned: HashSet<String> = ownership
+            .fetch_all(&mut *transaction)
+            .await?
+            .into_iter()
+            .map(|(id,)| id)
+            .collect();
+
+        for id in &unique_ids {
+            if !owned.contains(id.as_str()) {
+                transaction.rollback().await?;
+                return Err(TranscriptError::TranscriptNotFound(id.to_string()));
+            }
+        }
+
+        let delete_sql = Self::in_statement("DELETE FROM transcripts WHERE meeting_id = ? AND id IN ", unique_ids.len());
+        let mut delete = sqlx::query(&delete_sql).bind(meeting_id);
+        for id in &unique_ids {
+            delete = delete.bind(id);
+        }
+        delete.execute(&mut *transaction).await?;
+
+        // A delete is a change of the meeting, so it bumps the meeting
+        // timestamp like a rename, an edit and a speaker change do. (When the
+        // reconcile below also removes bindings it bumps again; the second
+        // bump is harmless.)
+        sqlx::query("UPDATE meetings SET updated_at = ? WHERE id = ?")
+            .bind(Utc::now().naive_utc())
+            .bind(meeting_id)
+            .execute(&mut *transaction)
+            .await?;
+
+        // One reconcile per delete, inside the same transaction: its label
+        // set is read from `transcripts`, so it sees exactly the survivors.
+        let outcome = speaker::reconcile_meeting_speaker_assignments(&mut *transaction, meeting_id).await?;
+
+        transaction.commit().await?;
+        Ok(outcome)
+    }
+
+    /// One `IN (?)` clause for a batch statement: the statement's prefix, an
+    /// opening parenthesis, one `?` per id, and the closing parenthesis. The
+    /// bind loops stay per call site — the ownership check and the DELETE use
+    /// different sqlx builder types, so the binds cannot be shared.
+    fn in_statement(prefix: &str, id_count: usize) -> String {
+        format!("{prefix}({})", vec!["?"; id_count].join(", "))
     }
 
     /// Helper function to extract a snippet of text around the first match of a query.
@@ -769,5 +874,347 @@ mod tests {
                 case["description"].as_str().unwrap_or("?")
             );
         }
+    }
+
+    // --- delete_batch ----------------------------------------------------
+    //
+    // The batch delete runs one transaction: ownership check of every id,
+    // DELETE, meeting timestamp bump, and a single reconcile of the speaker
+    // assignments. The fixtures reuse the update_text style: bare meetings
+    // and transcript rows, plus the speaker-binding helpers below.
+
+    async fn transcript_ids(pool: &SqlitePool, meeting_id: &str) -> Vec<String> {
+        let rows = sqlx::query("SELECT id FROM transcripts WHERE meeting_id = ? ORDER BY id")
+            .bind(meeting_id)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter().map(|row| row.get("id")).collect()
+    }
+
+    async fn insert_person(pool: &SqlitePool, id: &str, name: &str) {
+        sqlx::query("INSERT INTO speakers (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind(name)
+            .bind("2024-01-01T00:00:00Z")
+            .bind("2024-01-01T00:00:00Z")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn bind_speaker(pool: &SqlitePool, meeting_id: &str, label: &str, speaker_id: &str) {
+        sqlx::query(
+            "INSERT INTO meeting_speakers (id, meeting_id, label, speaker_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(format!("meeting-speaker-{meeting_id}-{label}"))
+        .bind(meeting_id)
+        .bind(label)
+        .bind(speaker_id)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn bound_labels(pool: &SqlitePool, meeting_id: &str) -> Vec<String> {
+        let rows = sqlx::query("SELECT label FROM meeting_speakers WHERE meeting_id = ? ORDER BY label")
+            .bind(meeting_id)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter().map(|row| row.get("label")).collect()
+    }
+
+    async fn directory_names(pool: &SqlitePool) -> Vec<String> {
+        let rows = sqlx::query("SELECT name FROM speakers ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter().map(|row| row.get("name")).collect()
+    }
+
+    #[tokio::test]
+    async fn deleting_own_ids_removes_exactly_those_rows() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Keep", None).await;
+        insert_transcript(&pool, "t-1", "meeting-1", "Drop", None).await;
+        insert_transcript(&pool, "t-2", "meeting-1", "Drop too", None).await;
+
+        TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-1".to_string(), "t-2".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, vec!["t-0"]);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_second_time_asks_for_the_same_ids_and_gets_nothing_back() {
+        // The reconcile is idempotent and self-bumps only when it removes
+        // something, so a batch that deletes nothing it still owns must not
+        // fail. After the first delete the ids are gone, so the second call
+        // reports them as not found and changes nothing.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Only", None).await;
+
+        TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-0".to_string()])
+            .await
+            .unwrap();
+
+        let error = TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-0".to_string()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, TranscriptError::TranscriptNotFound(ref id) if id == "t-0"),
+            "{error:?}"
+        );
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_segments_leaves_a_valid_empty_transcript() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "First", None).await;
+        insert_transcript(&pool, "t-1", "meeting-1", "Second", None).await;
+
+        TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-1",
+            &["t-0".to_string(), "t-1".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn an_id_of_another_meeting_rejects_the_whole_batch_and_deletes_nothing() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_meeting(&pool, "meeting-2").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Mine", None).await;
+        insert_transcript(&pool, "t-1", "meeting-2", "Theirs", None).await;
+
+        let error = TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-1",
+            &["t-0".to_string(), "t-1".to_string()],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, TranscriptError::TranscriptNotFound(ref id) if id == "t-1"),
+            "{error:?}"
+        );
+        assert_eq!(
+            transcript_ids(&pool, "meeting-1").await,
+            vec!["t-0"],
+            "the owned id survives: a mixed batch is all-or-nothing"
+        );
+        assert_eq!(transcript_ids(&pool, "meeting-2").await, vec!["t-1"]);
+    }
+
+    #[tokio::test]
+    async fn deleting_through_a_meeting_that_does_not_exist_is_an_error() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Ours", None).await;
+
+        let error = TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-ghost",
+            &["t-0".to_string()],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, TranscriptError::MeetingNotFound(ref id) if id == "meeting-ghost"),
+            "{error:?}"
+        );
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, vec!["t-0"]);
+    }
+
+    #[tokio::test]
+    async fn the_error_display_never_carries_the_transcript_text() {
+        // Privacy contract: the id is the only payload the Display renders, so
+        // the log line and the frontend toast cannot leak meeting content.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-secret", "meeting-1", "Confidential words", None).await;
+
+        let error = TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-1",
+            &["t-secret".to_string(), "t-missing".to_string()],
+        )
+        .await
+        .unwrap_err();
+
+        let display = error.to_string();
+        assert!(display.contains("t-missing"), "{display}");
+        assert!(!display.contains("Confidential words"), "{display}");
+        assert!(!display.contains("t-secret"), "{display}");
+    }
+
+    #[tokio::test]
+    async fn a_delete_bumps_the_meeting_timestamp() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Old", None).await;
+        let before = updated_at(&pool, "meeting-1").await;
+
+        TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-0".to_string()])
+            .await
+            .unwrap();
+
+        assert_ne!(updated_at(&pool, "meeting-1").await, before);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_empty_batch_changes_nothing() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Keep me", None).await;
+        let before = updated_at(&pool, "meeting-1").await;
+
+        TranscriptsRepository::delete_batch(&pool, "meeting-1", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, vec!["t-0"]);
+        assert_eq!(
+            updated_at(&pool, "meeting-1").await, before,
+            "an empty batch is a no-op, not a meeting edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_id_in_the_batch_is_deleted_once_and_accepted() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Once", None).await;
+
+        TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-1",
+            &["t-0".to_string(), "t-0".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_speakers_last_segment_drops_their_binding_and_orphaned_person() {
+        // Reconcile inside the delete transaction: speaker_1 loses its final
+        // segment, so its name binding and the directory person it pointed at
+        // go away, while speaker_0 keeps everything.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Anna speaking", Some("speaker_0")).await;
+        insert_transcript(&pool, "t-1", "meeting-1", "Boris speaking", Some("speaker_1")).await;
+        insert_person(&pool, "person-0", "Anna").await;
+        insert_person(&pool, "person-1", "Boris").await;
+        bind_speaker(&pool, "meeting-1", "speaker_0", "person-0").await;
+        bind_speaker(&pool, "meeting-1", "speaker_1", "person-1").await;
+
+        let outcome = TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-1".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, vec!["t-0"]);
+        assert_eq!(bound_labels(&pool, "meeting-1").await, vec!["speaker_0"]);
+        assert_eq!(directory_names(&pool).await, vec!["Anna"]);
+        assert_eq!(outcome.removed_bindings, 1);
+        assert_eq!(outcome.removed_people, 1);
+        // Only one label of two vanished: this is not a full names reset.
+        assert!(!outcome.names_reset);
+    }
+
+    #[tokio::test]
+    async fn deleting_every_labelled_segment_reports_a_full_names_reset() {
+        // When the batch removes the final segments of every named speaker,
+        // the outcome says so once, which is the command's cue to emit the
+        // speaker-names-reset event after the commit.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Anna speaking", Some("speaker_0")).await;
+        insert_transcript(&pool, "t-1", "meeting-1", "Boris speaking", Some("speaker_1")).await;
+        insert_person(&pool, "person-0", "Anna").await;
+        insert_person(&pool, "person-1", "Boris").await;
+        bind_speaker(&pool, "meeting-1", "speaker_0", "person-0").await;
+        bind_speaker(&pool, "meeting-1", "speaker_1", "person-1").await;
+
+        let outcome = TranscriptsRepository::delete_batch(
+            &pool,
+            "meeting-1",
+            &["t-0".to_string(), "t-1".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(bound_labels(&pool, "meeting-1").await, Vec::<String>::new());
+        assert_eq!(directory_names(&pool).await, Vec::<String>::new());
+        assert!(outcome.names_reset, "every binding was removed: {outcome:?}");
+        assert_eq!(outcome.removed_bindings, 2);
+        assert_eq!(outcome.removed_people, 2);
+    }
+
+    #[tokio::test]
+    async fn deleting_unlabelled_segments_keeps_every_name() {
+        // The reconcile is a no-op when no label disappears: deleting rows
+        // without a speaker (or a speaker with segments left) keeps bindings
+        // and directory people untouched.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Anna again", Some("speaker_0")).await;
+        insert_transcript(&pool, "t-1", "meeting-1", "Noise without speaker", None).await;
+        insert_person(&pool, "person-0", "Anna").await;
+        bind_speaker(&pool, "meeting-1", "speaker_0", "person-0").await;
+
+        let outcome = TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-1".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(transcript_ids(&pool, "meeting-1").await, vec!["t-0"]);
+        assert_eq!(bound_labels(&pool, "meeting-1").await, vec!["speaker_0"]);
+        assert_eq!(directory_names(&pool).await, vec!["Anna"]);
+        assert_eq!(outcome.removed_bindings, 0);
+        assert!(!outcome.names_reset);
+    }
+
+    #[tokio::test]
+    async fn deleting_touches_only_the_named_meetings_speakers() {
+        // The two-meeting fixture from the reconcile tests: a delete in one
+        // meeting never reaches the other meeting's bindings or people.
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_meeting(&pool, "meeting-2").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Only row of one", Some("speaker_0")).await;
+        insert_transcript(&pool, "t-1", "meeting-2", "Other meeting row", Some("speaker_0")).await;
+        insert_person(&pool, "person-0", "Shared name").await;
+        bind_speaker(&pool, "meeting-1", "speaker_0", "person-0").await;
+        bind_speaker(&pool, "meeting-2", "speaker_0", "person-0").await;
+
+        TranscriptsRepository::delete_batch(&pool, "meeting-1", &["t-0".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(bound_labels(&pool, "meeting-1").await, Vec::<String>::new());
+        assert_eq!(bound_labels(&pool, "meeting-2").await, vec!["speaker_0"]);
+        assert_eq!(
+            directory_names(&pool).await,
+            vec!["Shared name"],
+            "the person is still referenced by the other meeting"
+        );
     }
 }

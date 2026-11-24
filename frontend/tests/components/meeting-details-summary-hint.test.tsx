@@ -179,6 +179,11 @@ async function saveEdit(id: string, text: string) {
   await act(async () => { await panelProps.onTextEdited(id, text); });
 }
 
+/** Report a deleted segment the way the row does: after the delete resolved. */
+async function deleteSegment(id: string) {
+  await act(async () => { await panelProps.onSegmentDeleted(id); });
+}
+
 describe('regenerate-summary hint on the meeting page', () => {
   test('a saved edit while a completed summary exists offers regeneration', async () => {
     summaryStatus = 'completed';
@@ -220,6 +225,194 @@ describe('regenerate-summary hint on the meeting page', () => {
     // stale-summary hint appears for an edit that was not applied.
     expect(String(thrown)).toContain('database is locked');
     expect(infoNotify).not.toHaveBeenCalled();
+  });
+
+  // Ticket 01: a single delete makes the summary stale through the very same
+  // hint chain an edit uses (the bulk toolbar of ticket 05 reuses it), and a
+  // rejected delete must neither claim staleness nor swallow the error the
+  // row toasts on.
+  test('a deleted segment while a completed summary exists offers regeneration', async () => {
+    summaryStatus = 'completed';
+    const deleted = mock(async (_id: string) => {});
+    await show({ onSegmentDeleted: deleted });
+
+    await deleteSegment('t1');
+
+    expect(deleted).toHaveBeenCalledWith('t1');
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.action.label).toBe('Regenerate Summary');
+  });
+
+  test('a rejected delete shows no hint and keeps propagating to the row', async () => {
+    summaryStatus = 'completed';
+    let thrown: unknown = null;
+    await show({ onSegmentDeleted: async () => { throw new Error('transcript not found: t1'); } });
+
+    await act(async () => {
+      try { await panelProps.onSegmentDeleted('t1'); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(infoNotify).not.toHaveBeenCalled();
+  });
+
+  // Ticket 01 gates: the delete availability mirrors the edit gates plus the
+  // retranscription, and both booleans reach the view through the panel.
+  test('the panel receives the diarization and retranscription delete gates', async () => {
+    await show();
+
+    expect(panelProps.isDiarizing).toBe(false);
+    expect(panelProps.isRetranscribing).toBe(false);
+  });
+
+  // Ticket 02: the page wires the selection mode through the panel: the
+  // toolbar toggle, the checkbox host, and the batch delete host chain. The
+  // mode is ephemeral component state, so it starts closed with nothing
+  // selected, and a working callback must always reach the view.
+  test('the panel receives the selection mode wiring, closed at first', async () => {
+    await show();
+    expect(panelProps.selectionMode).toBe(false);
+    expect(panelProps.selectedIds).toEqual([]);
+    expect(typeof panelProps.onToggleSelection).toBe('function');
+    expect(typeof panelProps.onToggleSelected).toBe('function');
+    expect(typeof panelProps.onSegmentsBulkDeleted).toBe('function');
+  });
+
+  test('the toggle opens the mode and checkboxes build the counter', async () => {
+    await show();
+
+    await act(async () => { panelProps.onToggleSelection(); });
+    expect(panelProps.selectionMode).toBe(true);
+
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    expect(panelProps.selectedIds).toEqual(['t1']);
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+    expect(panelProps.selectedIds).toEqual(['t1', 't2']);
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    expect(panelProps.selectedIds).toEqual(['t2']);
+  });
+
+  test('leaving the mode clears the selection', async () => {
+    await show();
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+
+    await act(async () => { panelProps.onToggleSelection(); });
+
+    expect(panelProps.selectionMode).toBe(false);
+    expect(panelProps.selectedIds).toEqual([]);
+  });
+
+  test('a successful batch hands the ids to the host and empties the selection', async () => {
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk.mock.calls).toEqual([[['t1', 't2']]]);
+    // The mode stays open for the next cleaning round; only the ids clear.
+    expect(panelProps.selectionMode).toBe(true);
+    expect(panelProps.selectedIds).toEqual([]);
+  });
+
+  test('a failed batch keeps the selection so the user can retry', async () => {
+    let thrown: unknown = null;
+    await show({ onSegmentsBulkDeleted: async () => { throw new Error('transcript not found: t2'); } });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => {
+      try { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(panelProps.selectedIds).toEqual(['t1', 't2']);
+  });
+
+  // Ticket 05: a successful bulk delete makes the summary stale through the
+  // very same id-deduped hint chain an edit or a single delete uses — once per
+  // batch, not per segment — while a rejected batch must neither claim
+  // staleness nor swallow the error the toolbar toasts on.
+  test('a bulk delete while a completed summary exists offers regeneration once', async () => {
+    summaryStatus = 'completed';
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.id).toBe('transcript-edit-summary-hint');
+    expect(options.action.label).toBe('Regenerate Summary');
+
+    await act(async () => { options.action.onClick(); });
+    expect(regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  test('a bulk delete whose window refetch failed still clears the selection and offers regeneration once', async () => {
+    // The stand-in resolves the way the pagination hook does after a
+    // committed delete whose window re-read failed: the hook logs the
+    // error and swallows it, so the page must still complete the batch's
+    // consequences — clear the selection and fire the single hint —
+    // instead of treating the batch as failed.
+    summaryStatus = 'completed';
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(panelProps.selectedIds).toEqual([]);
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.id).toBe('transcript-edit-summary-hint');
+  });
+
+  test('a bulk delete with no summary shows no hint', async () => {
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(infoNotify).not.toHaveBeenCalled();
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+
+  test('a rejected bulk delete shows no hint and keeps propagating to the toolbar', async () => {
+    summaryStatus = 'completed';
+    let thrown: unknown = null;
+    await show({ onSegmentsBulkDeleted: async () => { throw new Error('transcript not found: t2'); } });
+
+    await act(async () => {
+      try { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(infoNotify).not.toHaveBeenCalled();
+  });
+
+  // The delete button's data: the page hands the panel a working callback
+  // built on the pagination hook's batch delete, so the live page never
+  // shows a trash that deletes nothing.
+  test('the panel receives the delete callback the page wires to the hook', async () => {
+    await show();
+    expect(typeof panelProps.onSegmentDeleted).toBe('function');
   });
 
   // Ticket 03: replacements go through this same save callback, so the hint

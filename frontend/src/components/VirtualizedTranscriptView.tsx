@@ -2,10 +2,13 @@
 
 import { useCallback, useRef, useReducer, startTransition, useEffect, useMemo, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Check } from "lucide-react";
+import { Check, ListChecks, Trash2, Users } from "lucide-react";
+import { Button } from "./ui/button";
+import { ConfirmationModal } from "./ConfirmationModel/confirmation-modal";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
@@ -77,11 +80,77 @@ export interface VirtualizedTranscriptViewProps {
      */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /**
+     * Called to delete one speech segment; the meeting page routes it to the
+     * pagination hook, which removes the row optimistically and rolls it back
+     * on failure, rethrowing so the row can toast. The live panel passes
+     * nothing, so rows stay inert. A single click deletes immediately: the
+     * spec asks for no confirmation for one segment.
+     */
+    onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+    /**
      * Whether a diarization pass is running for this meeting. The meeting page
      * reads it from the shared pass store; rows fold it into the edit gate so
      * an edit cannot race the pass's row reload.
      */
     isDiarizing?: boolean;
+    /**
+     * Whether a retranscription is running for this meeting. Like diarization
+     * it rewrites rows from the audio, so deletion closes while it runs (the
+     * same gate as editing, per the spec).
+     */
+    isRetranscribing?: boolean;
+
+    // Bulk selection mode (ticket 02, meeting page only). The page owns the
+    // id set (useTranscriptSelection): the view stays shared with the live
+    // recording page, which gets none of these props and renders unchanged.
+    // While `selectionMode` is on, rows show a checkbox, and the action bar
+    // offers «Удалить (N)»; a batch over N>1 asks first (spec: single never
+    // confirms). Gates fold into `allowDelete` — recording, diarization and
+    // retranscription close the whole mode, like single delete.
+    /** Whether the «Выделение» mode is on. */
+    selectionMode?: boolean;
+    /** The selected segment ids (selection order), owned by the page. */
+    selectedIds?: string[];
+    /** Flip one row's checkbox. */
+    onToggleSelected?: (transcriptId: string) => void;
+    /**
+     * Delete the given ids as one batch; the host chain (page → pagination
+     * hook) owns the optimistic removal, persistence and rollback and rejects
+     * on failure so the bar toasts. Absent on the live panel.
+     */
+    onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+    /**
+     * Leave the selection mode and clear the id set (ticket 04): the pencil
+     * calls it before opening an inline editor, so the two bulk modes over
+     * the same rows never run together. Absent on the live panel.
+     */
+    onExitSelection?: () => void;
+    /**
+     * «Выделить всё видимое» (ticket 03): the host marks every LOADED row
+     * (or clears when all of them are already marked). Absent on the live
+     * panel, and while the mode's gates are closed.
+     */
+    onSelectAllVisible?: () => void;
+    /**
+     * By-speaker selection (ticket 03): the host marks the loaded segments
+     * carrying this diarization label — never the panel's whole-meeting
+     * `segment_count`, which would lie in «Удалить (N)».
+     */
+    onSelectBySpeaker?: (label: string) => void;
+    /**
+     * Ctrl/Shift-click on a row (ticket 03, file-manager semantics): Ctrl
+     * reuses `onToggleSelected` (the checkbox's path); Shift asks the host
+     * for the range from the last selected row to this one. Plain clicks
+     * never select — the text stays selectable.
+     */
+    onRowRangeSelect?: (transcriptId: string, modifiers: { shift: boolean }) => void;
+    /**
+     * Delete-key seam (ticket 03): the page's single document listener
+     * bumps this nonce instead of owning the confirmation, so the Delete
+     * key presses the very same «Удалить (N)» path (house precedent:
+     * FindReplacePanel's focusNonce). 0 means «no request yet».
+     */
+    bulkDeleteNonce?: number;
 
     // Find & replace (meeting page). `findOpen` is the mode switch: while it
     // is true rows show their raw text and get <mark>s from `findMatches`.
@@ -154,6 +223,24 @@ function renderHighlightedText(text: string, highlights: HighlightRange[], activ
 // the find panel is open (defined-but-empty highlights mean «raw display»).
 const NO_HIGHLIGHTS: HighlightRange[] = [];
 
+// The failure toast shared by the single delete and the bulk delete: the raw
+// failure (possibly a driver-level message carrying transcript content)
+// belongs in the logs only — the toast carries translated strings. The
+// console message separates the two paths in the logs, and the key pair
+// chooses the singular (row) versus the bulk (plural) wording.
+function toastDeleteFailure(
+    error: unknown,
+    consoleMessage: string,
+    titleKey: string,
+    descriptionKey: string,
+    t: TFunction,
+): void {
+    console.error(consoleMessage, error);
+    toast.error(t(titleKey), {
+        description: t(descriptionKey),
+    });
+}
+
 // Memoized transcript segment component
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
@@ -169,6 +256,13 @@ const TranscriptSegment = memo(function TranscriptSegment({
     allowSpeakerEdit,
     onTextEdited,
     allowTextEdit,
+    onSegmentDeleted,
+    allowDelete,
+    selectionMode,
+    isSelected,
+    onToggleSelected,
+    onRowRangeSelect,
+    onExitSelection,
     highlights,
     activeMatch,
 }: {
@@ -188,6 +282,35 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /** False while recording; text edits exist only on the meeting page. */
     allowTextEdit: boolean;
+    /** Called to delete this segment (host owns optimistic state and rollback); absent on the live panel. */
+    onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+    /** False while recording, diarizing, retranscribing; deletion exists only on the meeting page. */
+    allowDelete: boolean;
+    /**
+     * Whether the bulk selection mode is on for this row: a checkbox leads
+     * the row. Already folded with `allowDelete` by the host, so the gates
+     * (recording/diarization/retranscription) close the mode uniformly.
+     */
+    selectionMode?: boolean;
+    /** Whether this row is currently selected. */
+    isSelected?: boolean;
+    /** Flip this row's checkbox; the page owns the id set. Absent on the live panel. */
+    onToggleSelected?: (transcriptId: string) => void;
+    /**
+     * Ctrl/Shift-click on the row's text (ticket 03, file-manager): the row
+     * reads the modifiers and routes Ctrl to `onToggleSelected` (the
+     * checkbox's path) and Shift here, for the host's range from the last
+     * selected row. The text <p>'s click handler exists only while the row
+     * is selectable AND this callback is present — without them plain clicks
+     * stay free for ordinary text selection.
+     */
+    onRowRangeSelect?: (transcriptId: string, modifiers: { shift: boolean }) => void;
+    /**
+     * Leave the selection mode and clear the id set (ticket 04): the pencil
+     * asks the host to drop the mode before opening the editor. Absent on
+     * the live panel.
+     */
+    onExitSelection?: () => void;
     /**
      * Find-panel ranges for this row. `undefined` means the panel is closed:
      * the normal filler-cleaned display. An array (possibly empty) means the
@@ -240,6 +363,33 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // passes a callback and opens the gate outside recording and streaming.
     const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
 
+    // The trash follows the same gate shape as the pencil: the host owns the
+    // delete path, and a streaming row is still being written by the
+    // pipeline. Recording, diarization and retranscription close the gate via
+    // `allowDelete`; a single delete never asks for confirmation (spec).
+    const canDelete = allowDelete && !!onSegmentDeleted && !isStreaming;
+
+    const handleDelete = async () => {
+        if (!onSegmentDeleted) return;
+        // The host save path (page → pagination hook) owns the optimistic
+        // removal, the persistence and the rollback. A rejected delete
+        // rethrows here, and only this row toasts.
+        try {
+            await onSegmentDeleted(id);
+        } catch (error) {
+            // The raw failure (possibly a driver-level message) belongs in the
+            // logs only: the toast carries just the translated strings, so no
+            // private meeting content or database detail can reach the user.
+            toastDeleteFailure(
+                error,
+                'Failed to delete transcript segment:',
+                'transcript.deleteSegmentFailed',
+                'transcript.deleteSegmentFailedDescription',
+                t,
+            );
+        }
+    };
+
     const saveDraft = async () => {
         if (!onTextEdited || !editingRef.current) return;
         // Close the editor for every save path first: Enter, blur and a late
@@ -282,6 +432,21 @@ const TranscriptSegment = memo(function TranscriptSegment({
         // from the render that flipped it, which is the current draft.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [allowTextEdit]);
+
+    // Mode exclusivity (ticket 04): entering the selection mode over an open
+    // editor must not drop the draft either — the same flush-and-close as the
+    // diarization gate, watched on the mode itself. It fires only on the
+    // transition into the mode, so the pencil opening an editor while the
+    // host is dropping the mode never re-triggers it (the mode left, it did
+    // not arrive).
+    useEffect(() => {
+        if (selectionMode && isEditing) {
+            void saveDraft();
+        }
+        // Same rule as the gate effect: the mode transition is the trigger,
+        // the draft comes from the render that flipped it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectionMode]);
 
     // Optimistic row state: set as soon as the user picks an item, cleared
     // once the refetched segment arrives (or on failure).
@@ -371,9 +536,47 @@ const TranscriptSegment = memo(function TranscriptSegment({
         </span>
     ) : null;
 
+    // The bulk-mode checkbox: it leads the row so the text never shifts when
+    // the mode turns on (an absent column would). A streaming row is still
+    // written by the pipeline and never selectable, and without the host's
+    // toggle (live panel) the mode does not exist.
+    const canSelect = selectionMode && allowDelete && !isStreaming && !!onToggleSelected;
+
+    // Ticket 03's file-manager click on the text: the modifier keys only —
+    // a plain click stays free for selecting text. Ctrl routes to the
+    // checkbox path (`onToggleSelected`), Shift to the host's range handler.
+    // The preventDefault keeps Shift-click from dragging a text selection
+    // across the range. The text <p> only gets this handler while the row is
+    // selectable and the host owns a range handler.
+    const handleRowClick = (event: {
+        shiftKey: boolean;
+        ctrlKey: boolean;
+        metaKey: boolean;
+        preventDefault?: () => void;
+    }) => {
+        const shift = event.shiftKey;
+        const ctrl = event.ctrlKey || event.metaKey;
+        if (!shift && !ctrl) return;
+        event.preventDefault?.();
+        if (shift) {
+            onRowRangeSelect?.(id, { shift: true });
+        } else {
+            onToggleSelected?.(id);
+        }
+    };
+
     return (
         <div id={`segment-${id}`} className="mb-3">
             <div className="flex items-start gap-2">
+                {canSelect && (
+                    <input
+                        type="checkbox"
+                        checked={!!isSelected}
+                        onChange={() => onToggleSelected?.(id)}
+                        aria-label={t('transcript.selectSegmentAria')}
+                        className="mt-1.5 h-4 w-4 flex-shrink-0 cursor-pointer accent-indigo-600"
+                    />
+                )}
                 <Tooltip>
                     <TooltipTrigger>
                         <span className="text-xs text-gray-400 mt-1 flex-shrink-0 min-w-[50px]">
@@ -427,7 +630,10 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         />
                     ) : (
                         <div className="group flex items-start gap-1">
-                            <p className="flex-1 text-base text-gray-800 leading-relaxed">
+                            <p
+                                className="flex-1 text-base text-gray-800 leading-relaxed"
+                                onClick={canSelect && onRowRangeSelect ? handleRowClick : undefined}
+                            >
                                 {highlights && highlights.length > 0
                                     ? renderHighlightedText(displayText, highlights, activeMatch ?? null)
                                     : displayText}
@@ -436,6 +642,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        // Exclusivity (ticket 04): an inline
+                                        // editor and the selection mode never
+                                        // share the rows, so opening one asks
+                                        // the host to drop the other first.
+                                        onExitSelection?.();
                                         // Seed from the RAW text, never the cleaned display.
                                         setDraft(text);
                                         editingRef.current = true;
@@ -457,6 +668,17 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     >
                                         <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                                     </svg>
+                                </button>
+                            )}
+                            {canDelete && (
+                                <button
+                                    type="button"
+                                    onClick={() => { void handleDelete(); }}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    title={t('transcript.deleteSegmentTooltip')}
+                                    aria-label={t('transcript.deleteSegmentTooltip')}
+                                >
+                                    <Trash2 width={16} height={16} />
                                 </button>
                             )}
                         </div>
@@ -484,7 +706,18 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     meetingSpeakers,
     onSpeakerChange,
     onTextEdited,
+    onSegmentDeleted,
     isDiarizing = false,
+    isRetranscribing = false,
+    selectionMode = false,
+    selectedIds,
+    onToggleSelected,
+    onSegmentsBulkDeleted,
+    onExitSelection,
+    onSelectAllVisible,
+    onSelectBySpeaker,
+    onRowRangeSelect,
+    bulkDeleteNonce = 0,
     findOpen = false,
     findMatches,
     findActiveIndex = -1,
@@ -494,6 +727,74 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // and an open editor or a mid-save would race that reload. The boolean is
     // computed once here so every row takes the same gate in both branches.
     const allowTextEdit = !isRecording && !isDiarizing;
+    // Deletion carries the same gate as editing plus the retranscription: both
+    // the diarization pass and the retranscription rewrite rows from the
+    // audio, so a delete racing either would collide with rows that are about
+    // to change underneath it.
+    const allowDelete = !isRecording && !isDiarizing && !isRetranscribing;
+
+    // Bulk selection mode (ticket 02). The page owns the id set; the view
+    // only draws checkboxes and the action bar and forwards the batch to the
+    // host chain. The gates are single delete's gates (spec: identical), and
+    // the whole mode — bar included — disappears with them.
+    const canBulkDelete = selectionMode && allowDelete && !!onSegmentsBulkDeleted;
+    const selection = selectedIds ?? [];
+    // Confirmation for N>1 only (spec story 9): one selected segment deletes
+    // at once, exactly like the row's hover trash.
+    const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
+    // A selection that moved under an open confirmation (row unchecked, or
+    // cleared by the page) closes it: the modal quotes the old N.
+    useEffect(() => {
+        setConfirmingBulkDelete(false);
+    }, [selection.join(',')]);
+    const [deletingBulk, setDeletingBulk] = useState(false);
+
+    const runBulkDelete = useCallback(async (ids: string[]) => {
+        if (!onSegmentsBulkDeleted) return;
+        setDeletingBulk(true);
+        try {
+            // The host owns the optimistic removal, persistence and rollback.
+            // A rejected batch toasts here, in translated strings only (the
+            // privacy pattern of the single delete): the raw failure goes to
+            // the logs, never to the toast.
+            await onSegmentsBulkDeleted(ids);
+        } catch (error) {
+            // The batch toasts the bulk (plural) wording; the row's trash
+            // keeps the singular keys.
+            toastDeleteFailure(
+                error,
+                'Failed to delete transcript segments:',
+                'transcript.deleteSegmentsFailed',
+                'transcript.deleteSegmentsFailedDescription',
+                t,
+            );
+        } finally {
+            setDeletingBulk(false);
+        }
+    }, [onSegmentsBulkDeleted, t]);
+
+    const handleBulkDeletePress = useCallback(() => {
+        if (selection.length === 0) return;
+        if (selection.length === 1) {
+            void runBulkDelete(selection);
+            return;
+        }
+        setConfirmingBulkDelete(true);
+    }, [selection, runBulkDelete]);
+
+    // Delete-key seam (ticket 03): the page's single document listener bumps
+    // `bulkDeleteNonce` instead of owning a second confirmation. The nonce is
+    // the whole request — the same handler the «Удалить (N)» button presses,
+    // so the N>1 confirmation and the privacy-safe failure toast are shared
+    // and can never diverge (FindReplacePanel's focusNonce is the precedent).
+    const lastDeleteNonceRef = useRef(bulkDeleteNonce);
+    useEffect(() => {
+        if (bulkDeleteNonce === lastDeleteNonceRef.current) return;
+        lastDeleteNonceRef.current = bulkDeleteNonce;
+        if (!canBulkDelete || bulkDeleteNonce === 0) return;
+        handleBulkDeletePress();
+    }, [bulkDeleteNonce, canBulkDelete, handleBulkDeletePress]);
+
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -647,6 +948,66 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 
     return (
         <div ref={scrollRef} className="flex flex-col h-full overflow-y-auto px-4 py-2">
+            {/* Selection-mode action bar: «Удалить (N)» with the live counter.
+                Single delete's gates close the whole mode, bar included. */}
+            {canBulkDelete && (
+                <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-white pb-2">
+                    {/* Ticket 03's assistants, left of the delete: «выделить
+                        всё видимое» (a re-press over a fully-marked list
+                        clears — the host's toggle) and by-speaker marking
+                        over the LOADED segments (the panel's segment_count
+                        covers the whole meeting and would lie in the
+                        «Удалить (N)» counter). Both share the mode's gates:
+                        without a host callback (live panel) they never
+                        appear. */}
+                    {onSelectAllVisible && (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={onSelectAllVisible}
+                            title={t('transcript.selectAllVisibleTooltip')}
+                        >
+                            <ListChecks size={16} />
+                            {t('transcript.selectAllVisible')}
+                        </Button>
+                    )}
+                    {onSelectBySpeaker && (meetingSpeakers?.length ?? 0) > 0 && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    title={t('transcript.selectBySpeakerTooltip')}
+                                    aria-label={t('transcript.selectBySpeakerTooltip')}
+                                >
+                                    <Users size={16} />
+                                    {t('transcript.selectBySpeaker')}
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                {dropdownSpeakers?.map(item => (
+                                    <DropdownMenuItem
+                                        key={item.label}
+                                        onSelect={() => onSelectBySpeaker(item.label)}
+                                    >
+                                        <span>{formatMeetingSpeakerLabel(item)}</span>
+                                    </DropdownMenuItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={selection.length === 0 || deletingBulk}
+                        onClick={handleBulkDeletePress}
+                        title={t('transcript.deleteSelectedTooltip')}
+                    >
+                        <Trash2 size={16} />
+                        {t('transcript.deleteSelected', { count: selection.length })}
+                    </Button>
+                </div>
+            )}
             {/* Recording Status Bar - Sticky at top, always visible when recording */}
             <AnimatePresence>
                 {isRecording && (
@@ -725,6 +1086,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        onSegmentDeleted={onSegmentDeleted}
+                                        allowDelete={allowDelete}
+                                        selectionMode={canBulkDelete}
+                                        isSelected={selection.includes(segment.id)}
+                                        onToggleSelected={onToggleSelected}
+                                        onRowRangeSelect={onRowRangeSelect}
+                                        onExitSelection={onExitSelection}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
@@ -794,6 +1162,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        onSegmentDeleted={onSegmentDeleted}
+                                        allowDelete={allowDelete}
+                                        selectionMode={canBulkDelete}
+                                        isSelected={selection.includes(segment.id)}
+                                        onToggleSelected={onToggleSelected}
+                                        onRowRangeSelect={onRowRangeSelect}
+                                        onExitSelection={onExitSelection}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
@@ -837,6 +1212,20 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 </>
             )}
             </div>
+            {/* The N>1 confirmation (spec: a single delete never confirms).
+                Reuses the house ConfirmationModal — same Delete/Cancel pair
+                the sidebar delete uses. */}
+            {canBulkDelete && (
+                <ConfirmationModal
+                    isOpen={confirmingBulkDelete}
+                    text={t('transcript.deleteConfirm', { count: selection.length })}
+                    onConfirm={() => {
+                        setConfirmingBulkDelete(false);
+                        void runBulkDelete(selection);
+                    }}
+                    onCancel={() => setConfirmingBulkDelete(false)}
+                />
+            )}
         </div>
     );
 };
