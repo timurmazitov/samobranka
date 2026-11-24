@@ -299,12 +299,9 @@ impl TranscriptsRepository {
 
         // Ownership of the whole batch in one statement: the rows the meeting
         // owns are compared against the request, so any unknown or foreign id
-        // rejects everything. There is no reusable `IN (...)` helper in the
-        // codebase, so the placeholders are built here.
-        let mut ownership_sql =
-            String::from("SELECT id FROM transcripts WHERE meeting_id = ? AND id IN (");
-        ownership_sql.push_str(&vec!["?"; unique_ids.len()].join(", "));
-        ownership_sql.push(')');
+        // rejects everything.
+        let ownership_sql =
+            Self::in_statement("SELECT id FROM transcripts WHERE meeting_id = ? AND id IN ", unique_ids.len());
         let mut ownership = sqlx::query_as::<_, (String,)>(&ownership_sql).bind(meeting_id);
         for id in &unique_ids {
             ownership = ownership.bind(id);
@@ -323,9 +320,7 @@ impl TranscriptsRepository {
             }
         }
 
-        let mut delete_sql = String::from("DELETE FROM transcripts WHERE meeting_id = ? AND id IN (");
-        delete_sql.push_str(&vec!["?"; unique_ids.len()].join(", "));
-        delete_sql.push(')');
+        let delete_sql = Self::in_statement("DELETE FROM transcripts WHERE meeting_id = ? AND id IN ", unique_ids.len());
         let mut delete = sqlx::query(&delete_sql).bind(meeting_id);
         for id in &unique_ids {
             delete = delete.bind(id);
@@ -348,6 +343,14 @@ impl TranscriptsRepository {
 
         transaction.commit().await?;
         Ok(outcome)
+    }
+
+    /// One `IN (?)` clause for a batch statement: the statement's prefix, an
+    /// opening parenthesis, one `?` per id, and the closing parenthesis. The
+    /// bind loops stay per call site — the ownership check and the DELETE use
+    /// different sqlx builder types, so the binds cannot be shared.
+    fn in_statement(prefix: &str, id_count: usize) -> String {
+        format!("{prefix}({})", vec!["?"; id_count].join(", "))
     }
 
     /// Helper function to extract a snippet of text around the first match of a query.

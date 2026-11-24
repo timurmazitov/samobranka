@@ -390,16 +390,16 @@ export default function PageContent({
         // only an unclaimed Escape closes the panel.
         closePanel();
       } else if (
-        (event.key === 'Delete' || event.key === 'Backspace')
+        event.key === 'Delete'
         && !event.defaultPrevented
         && selection.isSelecting
         && selection.selectedCount > 0
       ) {
         // Delete removes the selection through the very same button path.
-        // Backspace counts as the Delete key too: Mac laptop keyboards send
-        // it for their single Delete key. A focused text field owns the key
-        // (the inline editor, the find inputs): the selection never eats a
-        // typing keystroke.
+        // The spec names the Delete key only — Backspace stays a
+        // text-editing/browser-undo key and is left to the webview. A
+        // focused text field owns the key (the inline editor, the find
+        // inputs): the selection never eats a typing keystroke.
         if (isTypingTarget(event.target)) return;
         event.preventDefault();
         setBulkDeleteNonce(nonce => nonce + 1);

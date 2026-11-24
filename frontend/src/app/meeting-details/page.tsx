@@ -105,28 +105,35 @@ function MeetingDetailsContent() {
     await setTranscriptText(transcriptId, text);
   }, [setTranscriptText]);
 
-  // A delete removes rows and can empty a speaker's last segment, so the
-  // speaker list (labels, counts, names) reloads together with the deletion:
-  // the reconcile inside the command already dropped dead bindings in the
-  // database, and this read makes the panel and chips follow immediately.
-  // The names-reset event covers the "every name vanished" case separately.
-  // A rejection propagates to the row (its toast); the refresh is only
-  // meaningful after a successful delete.
-  const handleSegmentDeleted = useCallback(async (transcriptId: string) => {
-    await deleteTranscripts([transcriptId]);
+  // A delete — single (the row's trash) or bulk (ticket 02, one batch
+  // command over the selected ids) — removes rows and can empty a speaker's
+  // last segment, so the speaker list (labels, counts, names) reloads
+  // together with the deletion: the reconcile inside the command already
+  // dropped dead bindings in the database, and this read makes the panel and
+  // chips follow immediately. The names-reset event covers the "every name
+  // vanished" case separately. The bulk shape adds a window refetch
+  // (`refetchWindow`) so offset pagination never skips the rows that slid
+  // into the deleted ones' places. A rejection propagates to the caller (the
+  // row's toast; page-content keeps the selection and the view toasts); the
+  // refresh is only meaningful after a successful delete.
+  const handleSegmentsDeleted = useCallback(async (
+    transcriptIds: string[],
+    { refetchWindow = false }: { refetchWindow?: boolean } = {},
+  ) => {
+    await deleteTranscripts(transcriptIds, { refetchWindow });
     await loadMeetingSpeakers();
   }, [deleteTranscripts, loadMeetingSpeakers]);
-
-  // A bulk delete (ticket 02) is one batch command over the selected ids. It
-  // reloads the current page window (`refetchWindow`) so offset pagination
-  // never skips the rows that slid into the deleted ones' places, and reloads
-  // the speaker list for the same reason the single delete does — the
-  // reconcile already dropped dead bindings in the database. The error
-  // rethrows so page-content keeps the selection and the view toasts.
-  const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
-    await deleteTranscripts(transcriptIds, { refetchWindow: true });
-    await loadMeetingSpeakers();
-  }, [deleteTranscripts, loadMeetingSpeakers]);
+  // The two view props stay separate (the row's trash and the selection
+  // toolbar call them differently); both are stable one-liners over the one
+  // delete path above, so their identities never churn.
+  const handleSegmentDeleted = useCallback(
+    (transcriptId: string) => handleSegmentsDeleted([transcriptId]),
+    [handleSegmentsDeleted],
+  );
+  const handleSegmentsBulkDeleted = useCallback(
+    (transcriptIds: string[]) => handleSegmentsDeleted(transcriptIds, { refetchWindow: true }),
+    [handleSegmentsDeleted],
+  );
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {

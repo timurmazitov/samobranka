@@ -47,21 +47,21 @@ describe('ephemeral transcript segment selection', () => {
 
   test('toggling rows builds the selection and the counter', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
     await act(async () => { state.toggleSelected('t2'); });
     expect(state.selectedIds).toEqual(['t1', 't2']);
-    expect(state.isSelected('t1')).toBe(true);
+    expect(state.selectedIds.includes('t1')).toBe(true);
     expect(state.selectedCount).toBe(2);
 
     await act(async () => { state.toggleSelected('t1'); });
     expect(state.selectedIds).toEqual(['t2']);
-    expect(state.isSelected('t1')).toBe(false);
+    expect(state.selectedIds.includes('t1')).toBe(false);
   });
 
   test('exiting the mode clears the selection', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
     await act(async () => { state.exitSelection(); });
 
@@ -71,10 +71,10 @@ describe('ephemeral transcript segment selection', () => {
 
   test('entering the mode starts from an empty selection', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
     await act(async () => { state.exitSelection(); });
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
 
     expect(state.isSelecting).toBe(true);
     expect(state.selectedIds).toEqual([]);
@@ -85,10 +85,10 @@ describe('ephemeral transcript segment selection', () => {
   // and the file-manager Shift-click range.
   test('select all visible marks every loaded segment at once', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
 
-    await act(async () => { state.selectAllVisible(['t1', 't2', 't3']); });
+    await act(async () => { state.toggleAllVisible(['t1', 't2', 't3']); });
 
     // Re-selecting an already-selected row keeps its selection-order slot:
     // the Shift anchor is the LAST id the user really touched, not the list
@@ -99,10 +99,10 @@ describe('ephemeral transcript segment selection', () => {
 
   test('select all visible over an empty load clears the selection', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
 
-    await act(async () => { state.selectAllVisible([]); });
+    await act(async () => { state.toggleAllVisible([]); });
 
     // No visible rows means nothing to select — a stale id must never
     // survive a press over an empty list.
@@ -111,7 +111,7 @@ describe('ephemeral transcript segment selection', () => {
 
   test('a second select-all-visible press clears the selection', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
 
     await act(async () => { state.toggleAllVisible(['t1', 't2']); });
     expect(state.selectedIds).toEqual(['t1', 't2']);
@@ -122,7 +122,7 @@ describe('ephemeral transcript segment selection', () => {
 
   test('select-all-visible re-press over a partial selection selects the rest', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
 
     // Not everything is marked yet, so the press completes the selection
@@ -133,7 +133,7 @@ describe('ephemeral transcript segment selection', () => {
 
   test('shift-click ranges from the last selected row across the loaded order', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t2'); });
 
     // The file manager's rule: the range runs from the last selected row
@@ -143,7 +143,7 @@ describe('ephemeral transcript segment selection', () => {
     expect(state.selectedIds).toEqual(['t2', 't3', 't4', 't5']);
 
     await act(async () => { state.exitSelection(); });
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t5'); });
     await act(async () => { state.rangeSelectTo('t3', ['t1', 't2', 't3', 't4', 't5']); });
     expect(state.selectedIds).toEqual(['t5', 't4', 't3']);
@@ -151,7 +151,7 @@ describe('ephemeral transcript segment selection', () => {
 
   test('shift-click without an anchor selects just the clicked row', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
 
     // Nothing was selected before, so there is no range to extend: the
     // Shift-click behaves like a single selection.
@@ -161,7 +161,7 @@ describe('ephemeral transcript segment selection', () => {
 
   test('a meeting switch clears both the mode and the selection', async () => {
     await show('A');
-    await act(async () => { state.enterSelection(); });
+    await act(async () => { state.toggleSelection(); });
     await act(async () => { state.toggleSelected('t1'); });
     expect(state.selectedIds).toEqual(['t1']);
 

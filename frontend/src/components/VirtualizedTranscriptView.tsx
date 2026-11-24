@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useReducer, startTransition, useEffect, useMemo, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -222,6 +223,24 @@ function renderHighlightedText(text: string, highlights: HighlightRange[], activ
 // the find panel is open (defined-but-empty highlights mean «raw display»).
 const NO_HIGHLIGHTS: HighlightRange[] = [];
 
+// The failure toast shared by the single delete and the bulk delete: the raw
+// failure (possibly a driver-level message carrying transcript content)
+// belongs in the logs only — the toast carries translated strings. The
+// console message separates the two paths in the logs, and the key pair
+// chooses the singular (row) versus the bulk (plural) wording.
+function toastDeleteFailure(
+    error: unknown,
+    consoleMessage: string,
+    titleKey: string,
+    descriptionKey: string,
+    t: TFunction,
+): void {
+    console.error(consoleMessage, error);
+    toast.error(t(titleKey), {
+        description: t(descriptionKey),
+    });
+}
+
 // Memoized transcript segment component
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
@@ -361,10 +380,13 @@ const TranscriptSegment = memo(function TranscriptSegment({
             // The raw failure (possibly a driver-level message) belongs in the
             // logs only: the toast carries just the translated strings, so no
             // private meeting content or database detail can reach the user.
-            console.error('Failed to delete transcript segment:', error);
-            toast.error(t('transcript.deleteSegmentFailed'), {
-                description: t('transcript.deleteSegmentFailedDescription'),
-            });
+            toastDeleteFailure(
+                error,
+                'Failed to delete transcript segment:',
+                'transcript.deleteSegmentFailed',
+                'transcript.deleteSegmentFailedDescription',
+                t,
+            );
         }
     };
 
@@ -737,10 +759,15 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
             // the logs, never to the toast.
             await onSegmentsBulkDeleted(ids);
         } catch (error) {
-            console.error('Failed to delete transcript segments:', error);
-            toast.error(t('transcript.deleteSegmentFailed'), {
-                description: t('transcript.deleteSegmentFailedDescription'),
-            });
+            // The batch toasts the bulk (plural) wording; the row's trash
+            // keeps the singular keys.
+            toastDeleteFailure(
+                error,
+                'Failed to delete transcript segments:',
+                'transcript.deleteSegmentsFailed',
+                'transcript.deleteSegmentsFailedDescription',
+                t,
+            );
         } finally {
             setDeletingBulk(false);
         }

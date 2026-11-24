@@ -9,10 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * is component state, cleared when the mode closes AND when the meeting
  * changes, and it never reaches storage.
  *
- * Ticket 04 hooks both directions of mode exclusivity here: it will call
- * `exitSelection` when Find/Replace opens and pass an enter/exit listener so
- * the pencil closes the mode too. That is why enter/exit are separate
- * callbacks from `toggleSelection`.
+ * Ticket 04 wires both directions of mode exclusivity through this hook:
+ * the page calls `exitSelection` when Find/Replace opens, and passes it as
+ * the view's exit listener so the pencil closes the mode too.
  */
 export interface UseTranscriptSelectionReturn {
     /** Whether «Выделение» mode is on: rows show checkboxes. */
@@ -21,28 +20,22 @@ export interface UseTranscriptSelectionReturn {
     selectedIds: string[];
     /** Counter for «Удалить (N)». */
     selectedCount: number;
-    isSelected: (transcriptId: string) => boolean;
     /** Turn the mode on and off from the toolbar button. */
     toggleSelection: () => void;
-    /** Turn the mode on, always from an empty selection. */
-    enterSelection: () => void;
     /** Leave the mode and clear the id set (Esc, find opening, unmount). */
     exitSelection: () => void;
     /** Flip one row's checkbox. */
     toggleSelected: (transcriptId: string) => void;
-    /** Replace the whole id set — ticket 03's «выделить всё видимое» and by-speaker. */
+    /** Replace the whole id set — ticket 03's by-speaker and the post-batch clear. */
     setSelectedIds: (transcriptIds: string[]) => void;
     /**
-     * Mark every loaded segment (ticket 03). «Выделить всё видимое»: the
-     * caller hands the ids of the LOADED segments (page-window honesty —
-     * speaker counts from the panel cover the whole meeting and would lie
-     * in «Удалить (N)»). Already-selected rows keep their selection-order
-     * slot, so the Shift anchor stays the id the user really touched last.
-     */
-    selectAllVisible: (transcriptIds: string[]) => void;
-    /**
-     * Toggle button form of select-all-visible: everything visible is
-     * already marked → clear; otherwise complete the selection.
+     * Toggle button form of «выделить всё видимое» (ticket 03): the caller
+     * hands the ids of the LOADED segments (page-window honesty — speaker
+     * counts from the panel cover the whole meeting and would lie in
+     * «Удалить (N)»). Everything visible is already marked → clear;
+     * otherwise complete the selection, keeping already-selected rows in
+     * their selection-order slot so the Shift anchor stays the id the user
+     * really touched last.
      */
     toggleAllVisible: (transcriptIds: string[]) => void;
     /**
@@ -76,16 +69,6 @@ export function useTranscriptSelection(
     // The unmount path needs no extra code: the state dies with the owner
     // (the page remounts per meeting through page.tsx's key={meetingId}).
 
-    const isSelected = useCallback((transcriptId: string) =>
-        selectedIds.includes(transcriptId),
-        [selectedIds]
-    );
-
-    const enterSelection = useCallback(() => {
-        setIsSelecting(true);
-        setSelectedIdsState([]);
-    }, []);
-
     const exitSelection = useCallback(() => {
         setIsSelecting(false);
         setSelectedIdsState([]);
@@ -109,20 +92,6 @@ export function useTranscriptSelection(
 
     const setSelectedIds = useCallback((transcriptIds: string[]) => {
         setSelectedIdsState(Array.from(new Set(transcriptIds)));
-    }, []);
-
-    const selectAllVisible = useCallback((transcriptIds: string[]) => {
-        // Replace, but keep already-selected ids in their selection-order
-        // slots: the Shift anchor (ticket 03's file-manager ranges) is the
-        // LAST id the user touched, and re-marking a selected row must not
-        // promote it to the end of the order. An empty load replaces with
-        // nothing — a stale id never survives a press over an empty list.
-        setSelectedIdsState(prev => {
-            const visible = new Set(transcriptIds);
-            const kept = prev.filter(id => visible.has(id));
-            const added = transcriptIds.filter(id => !prev.includes(id));
-            return [...kept, ...added];
-        });
     }, []);
 
     const toggleAllVisible = useCallback((transcriptIds: string[]) => {
@@ -180,13 +149,10 @@ export function useTranscriptSelection(
         isSelecting,
         selectedIds,
         selectedCount: selectedIds.length,
-        isSelected,
         toggleSelection,
-        enterSelection,
         exitSelection,
         toggleSelected,
         setSelectedIds,
-        selectAllVisible,
         toggleAllVisible,
         rangeSelectTo,
     };

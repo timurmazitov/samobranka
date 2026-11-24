@@ -317,10 +317,12 @@ describe('the selection action bar', () => {
       console.error = originalConsoleError;
     }
 
+    // The batch toasts the bulk wording (plural, no per-segment count in
+    // the title); the single row keeps its singular keys.
     expect(errorNotify).toHaveBeenCalled();
     const [title, options] = errorNotify.mock.calls[0] as [string, Record<string, unknown>];
-    expect(title).toBe('Failed to delete segment');
-    expect(options.description).toBe('The segment is still in the transcript.');
+    expect(title).toBe('Failed to delete segments');
+    expect(options.description).toBe('The segments are still in the transcript.');
     const toastText = JSON.stringify(errorNotify.mock.calls[0]);
     expect(toastText).not.toContain('no such table');
     expect(toastText).not.toContain('database');

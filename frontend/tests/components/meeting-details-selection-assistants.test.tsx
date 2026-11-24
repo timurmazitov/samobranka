@@ -350,6 +350,20 @@ describe('selection keyboard on the page listener', () => {
     expect(panelProps.bulkDeleteNonce).toBe(0);
   });
 
+  test('Backspace is not the selection delete key: the spec names Delete only', async () => {
+    await show();
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    expect(panelProps.bulkDeleteNonce).toBe(0);
+
+    const event = pressKey({ key: 'Backspace' });
+
+    // The page claims Delete exclusively; Backspace stays a text-editing and
+    // browser-undo key and must not trigger the bulk delete confirmation.
+    expect(event.defaultPrevented).toBe(false);
+    expect(panelProps.bulkDeleteNonce).toBe(0);
+  });
+
   test('the Ctrl+F hotkey still opens the find panel with the selection keys added', async () => {
     await show();
 
