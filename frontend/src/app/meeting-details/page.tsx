@@ -54,6 +54,7 @@ function MeetingDetailsContent() {
     refetchMetadata,
     setTranscriptSpeaker,
     setTranscriptText,
+    deleteTranscripts,
     error: transcriptError,
   } = usePaginatedTranscripts({ meetingId: meetingId || '' });
 
@@ -103,6 +104,18 @@ function MeetingDetailsContent() {
   const handleTextEdited = useCallback(async (transcriptId: string, text: string) => {
     await setTranscriptText(transcriptId, text);
   }, [setTranscriptText]);
+
+  // A delete removes rows and can empty a speaker's last segment, so the
+  // speaker list (labels, counts, names) reloads together with the deletion:
+  // the reconcile inside the command already dropped dead bindings in the
+  // database, and this read makes the panel and chips follow immediately.
+  // The names-reset event covers the "every name vanished" case separately.
+  // A rejection propagates to the row (its toast); the refresh is only
+  // meaningful after a successful delete.
+  const handleSegmentDeleted = useCallback(async (transcriptId: string) => {
+    await deleteTranscripts([transcriptId]);
+    await loadMeetingSpeakers();
+  }, [deleteTranscripts, loadMeetingSpeakers]);
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {
@@ -373,6 +386,7 @@ function MeetingDetailsContent() {
     meetingSpeakers={meetingSpeakers}
     onSpeakerChanged={handleSpeakerChanged}
     onTextEdited={handleTextEdited}
+    onSegmentDeleted={handleSegmentDeleted}
     // Pagination props for efficient transcript loading
     segments={segments}
     hasMore={hasMore}

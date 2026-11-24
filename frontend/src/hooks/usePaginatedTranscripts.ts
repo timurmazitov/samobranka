@@ -43,6 +43,14 @@ interface UsePaginatedTranscriptsReturn {
      * its previous text and the error is rethrown so the caller can toast.
      */
     setTranscriptText: (transcriptId: string, text: string) => Promise<void>;
+    /**
+     * Delete speech segments of the meeting by id — the single path for both
+     * the row's hover trash (one id) and the bulk toolbar (many ids). Rows
+     * disappear optimistically and `totalCount`/the page offset follow; on
+     * failure the rows return in their original order and the counter is
+     * restored, then the error is rethrown so the caller can toast.
+     */
+    deleteTranscripts: (ids: string[]) => Promise<void>;
 }
 
 /**
@@ -93,6 +101,7 @@ export function usePaginatedTranscripts({
         setMetadata(null);
         setTranscripts([]);
         setTotalCount(0);
+        totalCountRef.current = 0;
         setIsLoading(true);
         setIsLoadingMore(false);
         setHasMore(false);
@@ -159,6 +168,7 @@ export function usePaginatedTranscripts({
             setHasMore(response.has_more);
             hasMoreRef.current = response.has_more;
             setTotalCount(response.total_count);
+            totalCountRef.current = response.total_count;
             offsetRef.current = offset + newTranscripts.length;
 
             return newTranscripts;
@@ -279,6 +289,14 @@ export function usePaginatedTranscripts({
         transcriptsRef.current = transcripts;
     }, [transcripts]);
 
+    // Mirror of `totalCount` for the same reason: the optimistic delete
+    // recomputes has_more against the post-delete total without reading
+    // possibly stale state in its (identity-stable) closure.
+    const totalCountRef = useRef(0);
+    useEffect(() => {
+        totalCountRef.current = totalCount;
+    }, [totalCount]);
+
     const setTranscriptText = useCallback(async (transcriptId: string, text: string) => {
         const normalized = normalizeTranscriptText(text);
         // Never optimistically blank a row: the repository is the authority
@@ -304,6 +322,57 @@ export function usePaginatedTranscripts({
         }
     }, []);
 
+    // The delete is optimistic like the text edit, for a list of ids from the
+    // start so the bulk toolbar (ticket 02) reuses this exact path. Every
+    // state touch is gated on the request id: a meeting switch during an
+    // in-flight delete must neither remove nor restore the old meeting's
+    // rows. Removing N loaded rows shifts the LIMIT/OFFSET window back by N,
+    // so the offset and the totalCount move with them — otherwise the next
+    // `loadMore` silently skips the rows that slid into the passed range.
+    // `hasMore` goes honest: when the loaded rows now cover the total, there
+    // is nothing left to fetch even though the old server total said more.
+    const deleteTranscripts = useCallback(async (ids: string[]) => {
+        const uniqueIds = Array.from(new Set(ids));
+        if (uniqueIds.length === 0) return;
+
+        const requestId = requestIdRef.current;
+        if (!isCurrentRequest(requestId)) return;
+        const removed = transcriptsRef.current.filter(t => uniqueIds.includes(t.id));
+        if (removed.length === 0) return;
+        const removedIds = new Set(removed.map(t => t.id));
+
+        setTranscripts(prev => prev.filter(t => !removedIds.has(t.id)));
+        offsetRef.current = Math.max(0, offsetRef.current - removed.length);
+        // The post-delete total decides has_more: once the loaded rows cover
+        // it, there is nothing left to fetch, even if the old server total
+        // said more. Read the mirrors, not state, so this closure stays
+        // identity-stable for the memoized callers.
+        const nextTotal = Math.max(0, totalCountRef.current - removed.length);
+        const nextLoaded = transcriptsRef.current.length - removed.length;
+        const nextHasMore = nextLoaded < nextTotal;
+        setTotalCount(nextTotal);
+        totalCountRef.current = nextTotal;
+        setHasMore(nextHasMore);
+        hasMoreRef.current = nextHasMore;
+
+        try {
+            await invoke('api_delete_transcripts', { meetingId, ids: uniqueIds });
+        } catch (error) {
+            if (isCurrentRequest(requestId)) {
+                // Restore the removed rows in the canonical audio order and
+                // put the counter back, so a failed delete leaves no trace.
+                setTranscripts(prev =>
+                    [...prev, ...removed].sort((a, b) =>
+                        (a.audio_start_time ?? 0) - (b.audio_start_time ?? 0)
+                    )
+                );
+                setTotalCount(count => count + removed.length);
+                offsetRef.current += removed.length;
+            }
+            throw error;
+        }
+    }, [meetingId, isCurrentRequest]);
+
     return {
         metadata,
         segments,
@@ -321,5 +390,6 @@ export function usePaginatedTranscripts({
         refetchMetadata,
         setTranscriptSpeaker,
         setTranscriptText,
+        deleteTranscripts,
     };
 }

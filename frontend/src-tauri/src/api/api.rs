@@ -1193,6 +1193,63 @@ pub async fn api_update_transcript_text<R: Runtime>(
     }
 }
 
+/// Delete speech segments of one meeting in a single transaction: the ids
+/// must all belong to the meeting (an unknown or foreign id rejects the
+/// whole batch), the meeting timestamp bumps, and the speaker assignments
+/// are reconciled once so labels without segments and orphaned directory
+/// people go away. When the reconcile removed every name binding the
+/// `speaker-names-reset` event is emitted after the commit, like the
+/// retranscription and diarization paths do. The batch takes a list from the
+/// start: the row's trash button and the bulk toolbar share this command.
+#[tauri::command]
+pub async fn api_delete_transcripts<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    ids: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    log_info!(
+        "api_delete_transcripts called for meeting_id: {}, {} ids",
+        meeting_id,
+        ids.len()
+    );
+    let pool = state.db_manager.pool();
+    match TranscriptsRepository::delete_batch(pool, &meeting_id, &ids).await {
+        Ok(outcome) => {
+            log_info!(
+                "Successfully deleted {} transcript segments for meeting {}",
+                ids.len(),
+                meeting_id
+            );
+            // Like every other reconcile call site: announce the reset only
+            // after the transaction committed, never inside it.
+            if outcome.names_reset {
+                use tauri::Emitter;
+                let _ = app.emit(
+                    crate::audio::transcription::diarization_service::SPEAKER_NAMES_RESET_EVENT,
+                    serde_json::json!({
+                        "meeting_id": meeting_id,
+                        "code": crate::audio::transcription::diarization_service::SPEAKER_NAMES_RESET_CODE,
+                    }),
+                );
+            }
+            Ok(serde_json::json!({"message": "Transcript segments deleted successfully"}))
+        }
+        Err(e) => {
+            // The error Display carries ids only, never the transcript text,
+            // so the log and the toast the frontend shows stay free of
+            // meeting content.
+            log_error!(
+                "Failed to delete {} transcript segments for meeting {}: {}",
+                ids.len(),
+                meeting_id,
+                e
+            );
+            Err(e.to_string())
+        }
+    }
+}
+
 /// Every name of the global people directory: no query, no limit, and no
 /// guarantee of order (sorting lives in one place, on the frontend).
 #[tauri::command]

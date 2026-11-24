@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Check } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
@@ -77,11 +77,25 @@ export interface VirtualizedTranscriptViewProps {
      */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /**
+     * Called to delete one speech segment; the meeting page routes it to the
+     * pagination hook, which removes the row optimistically and rolls it back
+     * on failure, rethrowing so the row can toast. The live panel passes
+     * nothing, so rows stay inert. A single click deletes immediately: the
+     * spec asks for no confirmation for one segment.
+     */
+    onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+    /**
      * Whether a diarization pass is running for this meeting. The meeting page
      * reads it from the shared pass store; rows fold it into the edit gate so
      * an edit cannot race the pass's row reload.
      */
     isDiarizing?: boolean;
+    /**
+     * Whether a retranscription is running for this meeting. Like diarization
+     * it rewrites rows from the audio, so deletion closes while it runs (the
+     * same gate as editing, per the spec).
+     */
+    isRetranscribing?: boolean;
 
     // Find & replace (meeting page). `findOpen` is the mode switch: while it
     // is true rows show their raw text and get <mark>s from `findMatches`.
@@ -169,6 +183,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
     allowSpeakerEdit,
     onTextEdited,
     allowTextEdit,
+    onSegmentDeleted,
+    allowDelete,
     highlights,
     activeMatch,
 }: {
@@ -188,6 +204,10 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /** False while recording; text edits exist only on the meeting page. */
     allowTextEdit: boolean;
+    /** Called to delete this segment (host owns optimistic state and rollback); absent on the live panel. */
+    onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+    /** False while recording, diarizing, retranscribing; deletion exists only on the meeting page. */
+    allowDelete: boolean;
     /**
      * Find-panel ranges for this row. `undefined` means the panel is closed:
      * the normal filler-cleaned display. An array (possibly empty) means the
@@ -239,6 +259,30 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // The pencil exists only where an editor has a host: the meeting page
     // passes a callback and opens the gate outside recording and streaming.
     const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
+
+    // The trash follows the same gate shape as the pencil: the host owns the
+    // delete path, and a streaming row is still being written by the
+    // pipeline. Recording, diarization and retranscription close the gate via
+    // `allowDelete`; a single delete never asks for confirmation (spec).
+    const canDelete = allowDelete && !!onSegmentDeleted && !isStreaming;
+
+    const handleDelete = async () => {
+        if (!onSegmentDeleted) return;
+        // The host save path (page → pagination hook) owns the optimistic
+        // removal, the persistence and the rollback. A rejected delete
+        // rethrows here, and only this row toasts.
+        try {
+            await onSegmentDeleted(id);
+        } catch (error) {
+            // The raw failure (possibly a driver-level message) belongs in the
+            // logs only: the toast carries just the translated strings, so no
+            // private meeting content or database detail can reach the user.
+            console.error('Failed to delete transcript segment:', error);
+            toast.error(t('transcript.deleteSegmentFailed'), {
+                description: t('transcript.deleteSegmentFailedDescription'),
+            });
+        }
+    };
 
     const saveDraft = async () => {
         if (!onTextEdited || !editingRef.current) return;
@@ -459,6 +503,17 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     </svg>
                                 </button>
                             )}
+                            {canDelete && (
+                                <button
+                                    type="button"
+                                    onClick={() => { void handleDelete(); }}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    title={t('transcript.deleteSegmentTooltip')}
+                                    aria-label={t('transcript.deleteSegmentTooltip')}
+                                >
+                                    <Trash2 width={16} height={16} />
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -484,7 +539,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     meetingSpeakers,
     onSpeakerChange,
     onTextEdited,
+    onSegmentDeleted,
     isDiarizing = false,
+    isRetranscribing = false,
     findOpen = false,
     findMatches,
     findActiveIndex = -1,
@@ -494,6 +551,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // and an open editor or a mid-save would race that reload. The boolean is
     // computed once here so every row takes the same gate in both branches.
     const allowTextEdit = !isRecording && !isDiarizing;
+    // Deletion carries the same gate as editing plus the retranscription: both
+    // the diarization pass and the retranscription rewrite rows from the
+    // audio, so a delete racing either would collide with rows that are about
+    // to change underneath it.
+    const allowDelete = !isRecording && !isDiarizing && !isRetranscribing;
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -725,6 +787,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        onSegmentDeleted={onSegmentDeleted}
+                                        allowDelete={allowDelete}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
@@ -794,6 +858,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        onSegmentDeleted={onSegmentDeleted}
+                                        allowDelete={allowDelete}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
