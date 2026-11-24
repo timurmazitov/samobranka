@@ -53,6 +53,8 @@ interface TranscriptPanelProps {
   selectedIds?: string[];
   onToggleSelected?: (transcriptId: string) => void;
   onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+  /** Leave the selection mode and clear the ids (ticket 04, pencil click). */
+  onExitSelection?: () => void;
 
   // Find & replace (meeting page only): opens the floating panel and drives
   // the row highlights through the virtualized view.
@@ -92,6 +94,7 @@ export function TranscriptPanel({
   selectedIds,
   onToggleSelected,
   onSegmentsBulkDeleted,
+  onExitSelection,
   onOpenFind,
   findOpen,
   findMatches,
