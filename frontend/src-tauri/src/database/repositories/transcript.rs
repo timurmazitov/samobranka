@@ -275,7 +275,7 @@ impl TranscriptsRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::{TranscriptError, TranscriptsRepository};
+    use super::{normalize_transcript_text, TranscriptError, TranscriptsRepository};
     use crate::api::TranscriptSegment;
     use crate::database::repositories::meeting::MeetingsRepository;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -736,5 +736,38 @@ mod tests {
 
         let (stored, ..) = transcript_row(&pool, "t-0").await;
         assert_eq!(stored, "Keep me", "nothing was written");
+    }
+
+    /// The normalization both sides share: the frontend mirror
+    /// (`frontend/src/lib/transcript-format.ts`) and this repository function
+    /// are pinned to the same fixture, so the optimistic row value cannot
+    /// drift from what the database stores (same shared-fixture idea as
+    /// pinning DIARIZATION_BAND_START against progress_scale.rs).
+    #[test]
+    fn normalize_transcript_text_matches_the_shared_fixture() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/transcript-normalize.json"))
+                .expect("the normalization fixture is valid JSON");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("the fixture carries a cases array");
+        assert!(
+            cases.len() >= 10,
+            "the fixture must keep its full case set, got {}",
+            cases.len()
+        );
+
+        for case in cases {
+            let input = case["input"].as_str().expect("case input is a string");
+            let expected = case["expected"]
+                .as_str()
+                .expect("case expected is a string");
+            assert_eq!(
+                normalize_transcript_text(input),
+                expected,
+                "case: {}",
+                case["description"].as_str().unwrap_or("?")
+            );
+        }
     }
 }

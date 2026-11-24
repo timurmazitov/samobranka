@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Transcript, MeetingMetadata, PaginatedTranscriptsResponse, TranscriptSegmentData } from "@/types";
+import { normalizeTranscriptText } from "@/lib/transcript-format";
 
 const DEFAULT_PAGE_SIZE = 100;
 
@@ -29,8 +30,12 @@ interface UsePaginatedTranscriptsReturn {
     refetchMetadata: () => Promise<void>;
     /** Apply a row's speaker edit locally (after the backend accepted it). */
     setTranscriptSpeaker: (transcriptId: string, label: string | null, speakerName?: string | null) => void;
-    /** Apply a row's text edit locally (after the backend accepted it). */
-    setTranscriptText: (transcriptId: string, text: string) => void;
+    /**
+     * Save a row's text edit: applies the normalized text in place
+     * optimistically, then persists it. On failure the row is rolled back to
+     * its previous text and the error is rethrown so the caller can toast.
+     */
+    setTranscriptText: (transcriptId: string, text: string) => Promise<void>;
 }
 
 /**
@@ -237,12 +242,39 @@ export function usePaginatedTranscripts({
         )));
     }, []);
 
-    // A text edit changes only the row's text; timings and speaker stay, so
-    // the same in-place map keeps the row visible without a refetch.
-    const setTranscriptText = useCallback((transcriptId: string, text: string) => {
-        setTranscripts(prev => prev.map(t => (
-            t.id === transcriptId ? { ...t, text } : t
-        )));
+    // A text edit changes only the row's text; timings and speaker stay. The
+    // save is optimistic: the normalized text shows at once, the row reverts
+    // to the text this mirror holds if the backend rejects the write, and the
+    // error rethrows so the row can toast. The mirror (not the state closure)
+    // keeps this callback identity-stable for the memoized rows.
+    const transcriptsRef = useRef<Transcript[]>([]);
+    useEffect(() => {
+        transcriptsRef.current = transcripts;
+    }, [transcripts]);
+
+    const setTranscriptText = useCallback(async (transcriptId: string, text: string) => {
+        const normalized = normalizeTranscriptText(text);
+        // Never optimistically blank a row: the repository is the authority
+        // that rejects an empty line, and until it answers the user keeps
+        // seeing the previous text.
+        const previous = transcriptsRef.current.find(t => t.id === transcriptId)?.text;
+        const applied = normalized !== '' && previous !== undefined;
+        if (applied) {
+            setTranscripts(prev => prev.map(t => (
+                t.id === transcriptId ? { ...t, text: normalized } : t
+            )));
+        }
+
+        try {
+            await invoke('api_update_transcript_text', { transcriptId, text: normalized });
+        } catch (error) {
+            if (applied && previous !== undefined) {
+                setTranscripts(prev => prev.map(t => (
+                    t.id === transcriptId ? { ...t, text: previous } : t
+                )));
+            }
+            throw error;
+        }
     }, []);
 
     return {
