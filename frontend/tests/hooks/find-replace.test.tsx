@@ -36,8 +36,14 @@ const SEGMENTS: TranscriptSegmentData[] = [
   { id: 's4', timestamp: 3, text: 'motor and motoring' },
 ];
 
-function View({ segments = SEGMENTS }: { segments?: TranscriptSegmentData[] }) {
-  state = useFindReplace({ segments, loadAllPages });
+function View({
+  segments = SEGMENTS,
+  summaryBlocks,
+}: {
+  segments?: TranscriptSegmentData[];
+  summaryBlocks?: import('../../src/hooks/meeting-details/useFindReplace').SummaryBlock[];
+}) {
+  state = useFindReplace({ segments, summaryBlocks, loadAllPages });
   return <output>{state.matches.length}:{state.activeIndex}</output>;
 }
 
@@ -62,6 +68,141 @@ async function show() {
 async function setQuery(query: string) {
   await act(async () => { state.setQuery(query); });
 }
+
+describe('useFindReplace combined transcript → summary list', () => {
+  // The summary blocks as the summary surface would supply them (ticket 04):
+  // one text per editor block, in display order.
+  const SUMMARY_BLOCKS = [
+    { blockId: 'b1', text: 'alpha overview' },
+    { blockId: 'b2', text: 'alpha again and Alpha twice' },
+  ];
+
+  async function showWithSummary() {
+    await act(async () => {
+      renderer = create(<View summaryBlocks={SUMMARY_BLOCKS} />);
+    });
+  }
+
+  test('the combined list is transcript matches first, then summary, on one counter', async () => {
+    await showWithSummary();
+    await setQuery('alpha');
+
+    // SEGMENTS hit «alpha» in s1 (0..5) and twice in s3; the summary blocks
+    // follow in their own order — one shared list, shared indices.
+    expect(state.matches).toEqual([
+      { key: 'transcript:s1:0', source: 'transcript', segmentId: 's1', from: 0, to: 5 },
+      { key: 'transcript:s3:0', source: 'transcript', segmentId: 's3', from: 4, to: 9 },
+      { key: 'transcript:s3:1', source: 'transcript', segmentId: 's3', from: 22, to: 27 },
+      { key: 'summary:b1:0', source: 'summary', blockId: 'b1', from: 0, to: 5 },
+      { key: 'summary:b2:0', source: 'summary', blockId: 'b2', from: 0, to: 5 },
+      { key: 'summary:b2:1', source: 'summary', blockId: 'b2', from: 16, to: 21 },
+    ]);
+    expect(state.total).toBe(6);
+    expect(state.current).toBe(1);
+  });
+
+  test('goNext crosses the transcript → summary boundary and cycles back', async () => {
+    await showWithSummary();
+    await setQuery('alpha');
+
+    // Walk to the last transcript match…
+    await act(async () => { state.goNext(); });
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(2); // s3's second hit, last transcript match
+    expect(state.matches[state.activeIndex].source).toBe('transcript');
+
+    // …then across the boundary into the summary side, counter shared.
+    await act(async () => { state.goNext(); });
+    expect(state.matches[state.activeIndex].source).toBe('summary');
+    expect(state.matches[state.activeIndex].blockId).toBe('b1');
+    expect(state.current).toBe(4);
+    expect(state.total).toBe(6);
+
+    await act(async () => { state.goNext(); });
+    expect(state.matches[state.activeIndex].blockId).toBe('b2');
+    await act(async () => { state.goNext(); });
+    expect(state.matches[state.activeIndex].blockId).toBe('b2');
+    // Past the end the list cycles to the first transcript match.
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(0);
+    expect(state.matches[state.activeIndex].source).toBe('transcript');
+  });
+
+  test('goPrev crosses the summary → transcript boundary backwards', async () => {
+    await showWithSummary();
+    await setQuery('alpha');
+
+    // From the first match, wrapping backwards lands on the LAST summary
+    // match, and walking back through the summary reaches the transcript.
+    await act(async () => { state.goPrev(); });
+    expect(state.activeIndex).toBe(5);
+    expect(state.matches[state.activeIndex].source).toBe('summary');
+    await act(async () => { state.goPrev(); });
+    expect(state.matches[state.activeIndex].source).toBe('summary');
+    await act(async () => { state.goPrev(); });
+    expect(state.matches[state.activeIndex].source).toBe('summary');
+    expect(state.matches[state.activeIndex].blockId).toBe('b1');
+    await act(async () => { state.goPrev(); });
+    expect(state.matches[state.activeIndex].source).toBe('transcript');
+  });
+
+  test('the case toggle splits «Alpha» from «alpha» across both sources', async () => {
+    await showWithSummary();
+    await setQuery('alpha');
+    expect(state.total).toBe(6); // case-insensitive by default
+
+    await act(async () => { state.setCaseSensitive(true); });
+    // Lowercase «alpha» only — s1's «Alpha» and the summary's «Alpha twice»
+    // drop out; the toggle acts on the summary matches just like transcripts.
+    expect(state.matches.map(m => m.key)).toEqual([
+      'transcript:s3:0',
+      'transcript:s3:1',
+      'summary:b1:0',
+      'summary:b2:0',
+    ]);
+
+    await setQuery('Alpha');
+    // Capital «Alpha»: s1's leading word and the summary's «Alpha twice» —
+    // both sources again, transcript first, per-block occurrence indexes
+    // restart per block (b2's single case-sensitive hit is index 0).
+    expect(state.matches).toEqual([
+      { key: 'transcript:s1:0', source: 'transcript', segmentId: 's1', from: 0, to: 5 },
+      { key: 'summary:b2:0', source: 'summary', blockId: 'b2', from: 16, to: 21 },
+    ]);
+  });
+
+  test('the whole-word toggle keeps a summary substring inside a longer word out', async () => {
+    await showWithSummary();
+    await setQuery('alph');
+    expect(state.matches.map(m => m.source)).toEqual([
+      'transcript', 'transcript', 'transcript', 'summary', 'summary', 'summary',
+    ]); // substring hits every «alpha», both in b2…
+
+    await act(async () => { state.setWholeWord(true); });
+    // …and «alph» is never a whole word, so all six drop out at once —
+    // the gate applies to the summary side exactly like the transcript side.
+    expect(state.matches).toEqual([]);
+    expect(state.noMatches).toBe(true);
+  });
+
+  test('summary-only matches navigate alone when the transcript has none', async () => {
+    await showWithSummary();
+    await setQuery('overview');
+    expect(state.matches).toEqual([
+      { key: 'summary:b1:0', source: 'summary', blockId: 'b1', from: 6, to: 14 },
+    ]);
+    expect(state.current).toBe(1);
+    expect(state.total).toBe(1);
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(0);
+  });
+
+  test('without summary blocks the list stays transcript-only', async () => {
+    await show();
+    await setQuery('alpha');
+    expect(state.matches.every(m => m.source === 'transcript')).toBe(true);
+  });
+});
 
 describe('useFindReplace match list', () => {
   test('a query builds one match per occurrence across every loaded segment', async () => {

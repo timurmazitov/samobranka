@@ -212,3 +212,19 @@
     overflow: visible !important;
   }
 }
+
+/* Find & replace in the summary editor: the match highlights the
+ * ProseMirror decoration plugin draws inside `.ProseMirror`. The palette
+ * matches the transcript rows' <mark>s (bg-yellow-100 / bg-yellow-300),
+ * and the active match is the visually distinct one. Decorations only add
+ * these classes to inline spans — formatting stays untouched. */
+.ProseMirror .find-replace-match {
+  background-color: rgb(254 249 195); /* yellow-100 */
+  color: rgb(17 24 39); /* gray-900 */
+  border-radius: 0.125rem;
+}
+
+.ProseMirror .find-replace-match.find-replace-match-active {
+  background-color: rgb(253 224 71); /* yellow-300 */
+  box-shadow: 0 0 0 1px rgb(234 179 8 / 0.6);
+}

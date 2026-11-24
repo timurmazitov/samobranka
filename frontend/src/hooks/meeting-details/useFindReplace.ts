@@ -6,9 +6,9 @@ import { findMatches } from '@/lib/find-matches';
 
 /**
  * One hit of the find & replace panel. Matches are found inside a single
- * transcript segment (ticket 02) or, later, a single summary text block
- * (tickets 04/05) — never across a boundary — so `from`/`to` are UTF-16
- * indices into that one text, exactly as `findMatches` reports them.
+ * transcript segment or, for the summary, a single summary text block —
+ * never across a boundary (the spec's boundary rule) — so `from`/`to` are
+ * UTF-16 indices into that one text, exactly as `findMatches` reports them.
  */
 export type FindMatchSource = 'transcript' | 'summary';
 
@@ -17,7 +17,7 @@ export interface Match {
     source: FindMatchSource;
     /** Set for transcript matches: the row to highlight and scroll to. */
     segmentId?: string;
-    /** Reserved for summary matches: the editor block id (ticket 04). */
+    /** Set for summary matches: the editor block id to highlight. */
     blockId?: string;
     /** Start index in the segment/block text (inclusive). */
     from: number;
@@ -55,9 +55,133 @@ export function buildTranscriptMatches(
     return matches;
 }
 
+/**
+ * One searchable unit of the summary: a single text block and its composed
+ * plain text. For BlockNote (and markdown, which parses into BlockNote) the
+ * text concatenates the block's inline content; for legacy it is the block's
+ * plain `content`. Matches never span blocks, so `from`/`to` are indices into
+ * this one text (ticket 04).
+ */
+export interface SummaryBlock {
+    blockId: string;
+    text: string;
+}
+
+/**
+ * Build the summary match list: every block is scanned in order, exactly like
+ * transcript segments, so the flat navigation order is «blocks top to bottom»
+ * after the transcript. Cross-block matches are structurally impossible —
+ * each text is one block.
+ */
+export function buildSummaryMatches(
+    blocks: SummaryBlock[],
+    query: string,
+    options: { caseSensitive?: boolean; wholeWord?: boolean },
+): Match[] {
+    if (!query.trim()) return [];
+
+    const matches: Match[] = [];
+    for (const block of blocks) {
+        findMatches(block.text, query, options).forEach((range, index) => {
+            matches.push({
+                key: `summary:${block.blockId}:${index}`,
+                source: 'summary',
+                blockId: block.blockId,
+                from: range.from,
+                to: range.to,
+            });
+        });
+    }
+    return matches;
+}
+
+interface BlockNoteInlineLike {
+    type?: string;
+    text?: string;
+    content?: unknown;
+}
+
+function inlineContentText(content: unknown): string {
+    if (!Array.isArray(content)) return '';
+    let text = '';
+    for (const node of content as BlockNoteInlineLike[]) {
+        if (!node || typeof node !== 'object') continue;
+        if (node.type === 'text' && typeof node.text === 'string') {
+            text += node.text;
+        } else if (node.type === 'link') {
+            // Links wrap their own styled-text runs; their text shows in the
+            // editor, so the block's searchable text includes it.
+            text += inlineContentText(node.content);
+        }
+    }
+    return text;
+}
+
+interface BlockNoteBlockLike {
+    id?: string;
+    content?: unknown;
+    children?: unknown;
+}
+
+/**
+ * Flatten BlockNote blocks (the live `editor.document`, the same shape for
+ * the blocknote and markdown formats) into searchable texts: each block's
+ * inline content concatenated in order, nested blocks following their parent
+ * in document order. Formatting is read off, never touched — this only
+ * composes the text that the find panel matches against.
+ */
+export function buildBlockNoteSummaryBlocks(blocks: readonly unknown[]): SummaryBlock[] {
+    const result: SummaryBlock[] = [];
+    const walk = (list: readonly unknown[]) => {
+        for (const raw of list) {
+            if (!raw || typeof raw !== 'object') continue;
+            const block = raw as BlockNoteBlockLike;
+            if (typeof block.id === 'string') {
+                result.push({ blockId: block.id, text: inlineContentText(block.content) });
+            }
+            if (Array.isArray(block.children)) walk(block.children);
+        }
+    };
+    walk(blocks);
+    return result;
+}
+
+interface LegacySectionLike {
+    title?: unknown;
+    blocks?: unknown;
+}
+
+/**
+ * Flatten the legacy summary (a map of section key → { title, blocks }) into
+ * searchable texts from each block's plain `content`. Entries that are not
+ * sections (`MeetingName`, `_section_order`) carry no blocks and contribute
+ * nothing — only block content is searchable, per the spec.
+ */
+export function buildLegacySummaryBlocks(summary: unknown): SummaryBlock[] {
+    if (!summary || typeof summary !== 'object') return [];
+
+    const result: SummaryBlock[] = [];
+    for (const section of Object.values(summary as Record<string, LegacySectionLike>)) {
+        if (!section || typeof section !== 'object' || !Array.isArray(section.blocks)) continue;
+        for (const raw of section.blocks) {
+            const block = raw as { id?: unknown; content?: unknown };
+            if (typeof block?.id === 'string' && typeof block.content === 'string') {
+                result.push({ blockId: block.id, text: block.content });
+            }
+        }
+    }
+    return result;
+}
+
 interface UseFindReplaceProps {
     /** The meeting's loaded transcript segments, in display order. */
     segments: TranscriptSegmentData[];
+    /**
+     * The summary's searchable blocks (ticket 04), supplied by the summary
+     * surface that owns the live editor content, in display order. The
+     * combined list is transcript-first, then these.
+     */
+    summaryBlocks?: SummaryBlock[];
     /**
      * Host action that pulls every remaining segment page into the pagination
      * state (the meeting page wires the pagination hook's `loadAllPages`).
@@ -72,7 +196,7 @@ interface UseFindReplaceReturn {
     query: string;
     caseSensitive: boolean;
     wholeWord: boolean;
-    /** The combined match list (transcript now, summary added in ticket 04). */
+    /** The combined match list: transcript matches first, then summary. */
     matches: Match[];
     /** Index into `matches`; -1 while there is nothing to navigate. */
     activeIndex: number;
@@ -112,6 +236,7 @@ interface UseFindReplaceReturn {
  */
 export function useFindReplace({
     segments,
+    summaryBlocks,
     loadAllPages,
 }: UseFindReplaceProps): UseFindReplaceReturn {
     const [open, setOpen] = useState(false);
@@ -127,9 +252,18 @@ export function useFindReplace({
     // pagination hook).
     const loadAllRequestedRef = useRef(false);
 
+    // The combined list, transcript-first then summary (the spec's navigation
+    // order): one shared array, so the counter and ↑/↓ walk both sources and
+    // cross their boundary cyclically.
     const matches = useMemo(
-        () => buildTranscriptMatches(segments, query, { caseSensitive, wholeWord }),
-        [segments, query, caseSensitive, wholeWord],
+        () => {
+            const options = { caseSensitive, wholeWord };
+            return [
+                ...buildTranscriptMatches(segments, query, options),
+                ...buildSummaryMatches(summaryBlocks ?? [], query, options),
+            ];
+        },
+        [segments, summaryBlocks, query, caseSensitive, wholeWord],
     );
 
     // Any new match list — a new query, a toggle, or freshly loaded pages —

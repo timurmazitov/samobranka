@@ -4,12 +4,23 @@ import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHand
 import dynamic from 'next/dynamic';
 import { Summary, SummaryDataResponse, SummaryFormat, BlockNoteBlock } from '@/types';
 import { AISummary } from './index';
-import { Block } from '@blocknote/core';
+import { Block, BlockNoteEditor } from '@blocknote/core';
 import { useCreateBlockNote } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
 import { useTranslation } from 'react-i18next';
 import { blocknoteDictionary } from '@/lib/blocknote-i18n';
 import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
+import {
+  buildBlockNoteSummaryBlocks,
+  buildLegacySummaryBlocks,
+  type Match,
+  type SummaryBlock,
+} from '@/hooks/meeting-details/useFindReplace';
+import {
+  applyFindHighlights,
+  type SummaryFindMatch,
+} from '@/lib/summary-find-reveal';
+import { FindHighlightExtension } from '@/components/BlockNoteEditor/FindHighlightExtension';
 import "@blocknote/shadcn/style.css";
 
 // Dynamically import BlockNote Editor to avoid SSR issues
@@ -30,6 +41,17 @@ interface BlockNoteSummaryViewProps {
     recorded_at?: string | null;
   };
   onDirtyChange?: (isDirty: boolean) => void;
+  // Find & replace (ticket 04): the panel's match list, filtered to the
+  // summary matches by the consumer; `findOpen` gates all highlighting.
+  findOpen?: boolean;
+  findMatches?: Match[];
+  findActiveIndex?: number;
+  /**
+   * Reports the summary's searchable blocks (blockId + composed text, in
+   * display order) whenever the editor content changes, so the page can
+   * feed them into the hook's combined match list.
+   */
+  onSummaryBlocksChange?: (blocks: SummaryBlock[]) => void;
 }
 
 export interface BlockNoteSummaryViewRef {
@@ -77,7 +99,11 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   error = null,
   onRegenerateSummary,
   meeting,
-  onDirtyChange
+  onDirtyChange,
+  findOpen = false,
+  findMatches,
+  findActiveIndex = -1,
+  onSummaryBlocksChange,
 }, ref) => {
   const { format, data } = detectSummaryFormat(summaryData);
   const [isDirty, setIsDirty] = useState(false);
@@ -87,15 +113,38 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
 
   // Create BlockNote editor for markdown parsing
   const { i18n } = useTranslation();
+  // One extension instance per editor creation (language switch recreates).
+  const highlightExtensionRef = useRef<FindHighlightExtension | null>(null);
+  const highlightLanguageRef = useRef<string | undefined>(undefined);
+  if (highlightLanguageRef.current !== i18n.language || !highlightExtensionRef.current) {
+    highlightLanguageRef.current = i18n.language;
+    highlightExtensionRef.current = new FindHighlightExtension();
+  }
   const editor = useCreateBlockNote(
     {
       initialContent: undefined,
       dictionary: blocknoteDictionary(i18n.language),
+      extensions: [highlightExtensionRef.current],
     },
     // BlockNote fixes its dictionary at creation: recreate on language switch
     // so the rendered markdown's menus and tooltips localize (native-i18n).
     [i18n.language],
   );
+
+  // The blocknote format's live editor instance, reported by the child
+  // Editor through its escape hatch (it owns the mounted instance). The
+  // counter re-runs the highlight and block-report effects once an instance
+  // arrives or is recreated by a language switch.
+  const liveEditorRef = useRef<BlockNoteEditor | null>(null);
+  const [liveEditorNonce, setLiveEditorNonce] = useState(0);
+  const handleEditorReady = useCallback((live: BlockNoteEditor) => {
+    liveEditorRef.current = live;
+    setLiveEditorNonce(nonce => nonce + 1);
+  }, []);
+
+  // Markdown is parsed asynchronously after mount; this counter re-runs the
+  // searchable-blocks report once the parse has replaced the document.
+  const [contentVersion, setContentVersion] = useState(0);
 
   // Parse markdown to blocks when format is markdown
   useEffect(() => {
@@ -110,6 +159,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
           // Delay to ensure editor has finished rendering before allowing onChange
           setTimeout(() => {
             isContentLoaded.current = true;
+            setContentVersion(version => version + 1);
           }, 100);
         } catch (err) {
           console.error('❌ Failed to parse markdown:', err);
@@ -136,6 +186,82 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
       setIsDirty(true);
     }
   }, []);
+
+  // The searchable text per format, in display order: BlockNote and
+  // markdown read the live blocks (markdown is only markdown at load — the
+  // truth is the parsed BlockNote), legacy walks the section blocks' plain
+  // content. Reported up so the hook folds the summary matches into the
+  // combined list after the transcript's.
+  const reportFindBlocks = useCallback(() => {
+    if (!onSummaryBlocksChange) return;
+    let blocks: SummaryBlock[];
+    if (format === 'legacy') {
+      blocks = buildLegacySummaryBlocks(summaryData);
+    } else if (format === 'markdown') {
+      blocks = buildBlockNoteSummaryBlocks(editor.document);
+    } else if (liveEditorRef.current) {
+      blocks = buildBlockNoteSummaryBlocks(liveEditorRef.current.document);
+    } else {
+      // The child Editor has not reported its instance yet: fall back to
+      // the persisted JSON — the same content it mounted.
+      blocks = buildBlockNoteSummaryBlocks(data?.summary_json ?? []);
+    }
+    const signature = JSON.stringify(blocks);
+    if (signature !== lastReportedBlocksRef.current) {
+      lastReportedBlocksRef.current = signature;
+      onSummaryBlocksChange(blocks);
+    }
+  }, [onSummaryBlocksChange, format, summaryData, editor, data?.summary_json]);
+  const lastReportedBlocksRef = useRef<string | null>(null);
+
+  // Report whenever the content the summary shows can have changed: new
+  // data, an editor (re)creation, the markdown parse finishing, or an edit
+  // through the BlockNote onChange.
+  useEffect(() => {
+    reportFindBlocks();
+  }, [reportFindBlocks, currentBlocks, liveEditorNonce, contentVersion]);
+
+  // Push the panel's summary matches into the editor. BlockNote and
+  // markdown highlight through the decoration plugin (all matches, the
+  // active one drawn distinctly); the legacy textareas get the spec's
+  // sanctioned fallback — the active match selected and scrolled into view.
+  useEffect(() => {
+    if (format === 'legacy') {
+      if (!findOpen || findActiveIndex < 0 || !findMatches || typeof document === 'undefined') {
+        return;
+      }
+      const active = findMatches[findActiveIndex];
+      if (!active?.blockId) return;
+      const textarea = document.querySelector(
+        `[data-block-id="${active.blockId}"]`,
+      ) as HTMLTextAreaElement | null;
+      if (!textarea) return;
+      // The sanctioned fallback for the textarea rows: select the match and
+      // scroll it in. No focus() — the find input must keep the caret so
+      // Enter/Shift+Enter keep navigating (a focused textarea would eat them).
+      textarea.setSelectionRange(active.from, active.to);
+      textarea.scrollIntoView({ block: 'center' });
+      return;
+    }
+
+    const target = format === 'markdown' ? editor : liveEditorRef.current;
+    if (!target) return;
+    const summaryMatches: SummaryFindMatch[] = findOpen && findMatches
+      ? findMatches.flatMap(match =>
+        match.blockId ? [{ blockId: match.blockId, from: match.from, to: match.to }] : [],
+      )
+      : [];
+    // Translate the panel's combined index to the active match's position
+    // inside this summary-only list: it is the number of blockId matches
+    // before it, minus none (the list is exactly the blockId matches).
+    let activePosition = -1;
+    if (findOpen && findMatches && findActiveIndex >= 0 && findMatches[findActiveIndex]?.blockId) {
+      activePosition = findMatches
+        .slice(0, findActiveIndex)
+        .filter(match => match.blockId).length;
+    }
+    applyFindHighlights(target, summaryMatches, activePosition);
+  }, [findOpen, findMatches, findActiveIndex, format, editor, liveEditorNonce]);
 
   // Notify parent of dirty state changes
   useEffect(() => {
@@ -255,6 +381,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
               console.log('📝 Editor blocks changed:', blocks.length);
               handleEditorChange(blocks);
             }}
+            onEditorReady={handleEditorReady}
             editable={true}
           />
         </div>

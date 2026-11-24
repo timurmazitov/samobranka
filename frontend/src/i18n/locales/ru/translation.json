@@ -1089,7 +1089,8 @@
     "previousMatch": "Предыдущее совпадение",
     "nextMatch": "Следующее совпадение",
     "caseSensitive": "Учитывать регистр",
-    "wholeWord": "Слово целиком"
+    "wholeWord": "Слово целиком",
+    "openSummaryTooltip": "Найти и заменить в конспекте"
   },
   "summary": {
     "stopTooltip": "Остановить создание конспекта",

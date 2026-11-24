@@ -1,6 +1,7 @@
 "use client";
 
 import { MeetingSummary, Summary, Transcript } from '@/types';
+import type { Match, SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import { BlockNoteSummaryView, BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
 import { EmptyStateSummary } from '@/components/EmptyStateSummary';
 import { ModelConfig } from '@/components/ModelSettingsModal';
@@ -8,7 +9,7 @@ import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
 import { SummaryUpdaterButtonGroup } from './SummaryUpdaterButtonGroup';
 import { useEffect, useRef, useState, RefObject } from 'react';
 import { toast } from 'sonner';
-import { Languages, ChevronDown } from 'lucide-react';
+import { Languages, ChevronDown, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { LanguagePickerPopover } from '@/components/LanguagePickerPopover';
@@ -65,6 +66,15 @@ interface SummaryPanelProps {
   onTemplateSelect: (templateId: string, templateName: string) => void;
   isModelConfigLoading?: boolean;
   onOpenModelSettings?: (openFn: () => void) => void;
+
+  // Find & replace (meeting page only): opens the shared floating panel and
+  // drives the summary highlight through the editor (ticket 04).
+  onOpenFind?: () => void;
+  findOpen?: boolean;
+  findMatches?: Match[];
+  findActiveIndex?: number;
+  /** Reports the summary's searchable blocks up to the page (see the view). */
+  onSummaryBlocksChange?: (blocks: SummaryBlock[]) => void;
 }
 
 export function SummaryPanel({
@@ -97,6 +107,11 @@ export function SummaryPanel({
   onTemplateSelect,
   isModelConfigLoading = false,
   onOpenModelSettings,
+  onOpenFind,
+  findOpen,
+  findMatches,
+  findActiveIndex,
+  onSummaryBlocksChange,
 }: SummaryPanelProps) {
   const { t } = useTranslation();
   const language = i18n.language as AppLanguageCode;
@@ -295,6 +310,22 @@ export function SummaryPanel({
               />
             </div>
           )}
+
+          {onOpenFind && (
+            <div className="flex-shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="px-2 @[22rem]:px-3"
+                onClick={onOpenFind}
+                title={t('findReplace.openSummaryTooltip')}
+                aria-label={t('findReplace.openSummaryTooltip')}
+              >
+                <Search size={18} />
+                <span className="hidden @[22rem]:inline">{t('findReplace.button')}</span>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -337,6 +368,10 @@ export function SummaryPanel({
               onSave={onSaveSummary}
               onSummaryChange={onSummaryChange}
               onDirtyChange={onDirtyChange}
+              findOpen={findOpen}
+              findMatches={findMatches}
+              findActiveIndex={findActiveIndex}
+              onSummaryBlocksChange={onSummaryBlocksChange}
               status={summaryStatus}
               error={summaryError}
               onRegenerateSummary={() => {

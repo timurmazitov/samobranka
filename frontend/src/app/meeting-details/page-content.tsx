@@ -19,7 +19,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
-import { useFindReplace } from '@/hooks/meeting-details/useFindReplace';
+import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
@@ -173,15 +173,37 @@ export default function PageContent({
     meeting,
   });
 
+  // The summary's searchable blocks, reported up by the summary surface
+  // (BlockNote / markdown / legacy) whenever its editor content changes. The
+  // hook folds them into the combined list after the transcript segments, so
+  // ↑/↓ walk one list across both sources.
+  const [summaryBlocks, setSummaryBlocks] = useState<SummaryBlock[]>([]);
+
   // The find & replace panel's state: query, toggles, the combined match
-  // list over the loaded segments, and the active position. The first open
-  // drains every segment page through the pagination hook so matches cover
-  // the whole meeting.
+  // list over the loaded segments and the summary, and the active position.
+  // The first open drains every segment page through the pagination hook so
+  // matches cover the whole meeting.
   const findReplace = useFindReplace({
     segments: segments ?? [],
+    summaryBlocks,
     loadAllPages: onLoadAllPages,
   });
   const { openPanel, closePanel } = findReplace;
+
+  // Navigation follows the active match across the split view: a summary
+  // match reveals the summary tab, a transcript match the transcript tab.
+  // The tab is only ever moved while the panel is open, and the manual
+  // selection marker (the auto-switch's guard) is set like the tab strip's
+  // own handler does, so the summary auto-switch never fights navigation.
+  useEffect(() => {
+    if (!findReplace.open) return;
+    const active = findReplace.activeIndex >= 0
+      ? findReplace.matches[findReplace.activeIndex]
+      : undefined;
+    if (!active) return;
+    manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
+    setActiveTab(active.source === 'summary' ? 'summary' : 'transcript');
+  }, [findReplace.open, findReplace.matches, findReplace.activeIndex, meeting.id]);
 
   // Page hotkeys — the meeting page's only document keydown listener. Ctrl/Cmd
   // +F and +H are intercepted with preventDefault, which also suppresses the
@@ -330,6 +352,11 @@ export default function PageContent({
               onTemplateSelect={templates.handleTemplateSelection}
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={handleRegisterModalOpen}
+              onOpenFind={() => openPanel({ focus: 'search' })}
+              findOpen={findReplace.open}
+              findMatches={findReplace.matches}
+              findActiveIndex={findReplace.activeIndex}
+              onSummaryBlocksChange={setSummaryBlocks}
             />
           }
         />
