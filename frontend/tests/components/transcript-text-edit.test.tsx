@@ -125,6 +125,24 @@ function text(instance: ReactTestRenderer): string {
   return JSON.stringify(instance.toJSON());
 }
 
+/** Re-render the mounted view with new props, preserving every row's state. */
+async function rerender(
+  instance: ReactTestRenderer,
+  segments: TranscriptSegmentData[],
+  props: Partial<ViewProps> = {},
+) {
+  await act(async () => {
+    instance.update(
+      <VirtualizedTranscriptView
+        segments={segments}
+        isRecording={false}
+        showConfidence={false}
+        {...props}
+      />,
+    );
+  });
+}
+
 /** The hover pencil: the only button on a text row while not editing. */
 function pencil(instance: ReactTestRenderer) {
   return instance.root.findAll(
@@ -186,6 +204,18 @@ describe('inline transcript text editing', () => {
     );
 
     expect(pencil(view)).toBeUndefined();
+  });
+
+  test('the pencil is absent and the editor cannot open while diarizing', async () => {
+    const view = await render(
+      [{ id: 't1', timestamp: 0, text: 'Diarized soon' }],
+      { isDiarizing: true, onTextEdited: async () => {} },
+    );
+
+    // No trigger to open the editor exists, so the editor cannot be reached.
+    expect(pencil(view)).toBeUndefined();
+    expect(textarea(view)).toBeUndefined();
+    expect(text(view)).toContain('Diarized soon');
   });
 
   test('the pencil is absent when the host passes no text callback (live panel)', async () => {
@@ -386,5 +416,51 @@ describe('inline transcript text editing', () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(edited).not.toHaveBeenCalled();
     expect(text(view)).toContain('Original text');
+  });
+
+  test('a diarization run starting while the editor is open saves the draft once and closes the editor', async () => {
+    const edited = mock(async (_id: string, _text: string) => {});
+    const props: Partial<ViewProps> = { onTextEdited: edited, isDiarizing: false };
+    const view = await render(
+      [{ id: 't1', timestamp: 0, text: 'Old words' }],
+      props,
+    );
+
+    await openEditor(view);
+    await type(view, '  Draft before the run  ');
+
+    // The pass starts: the host flips the gate mid-edit, exactly like the
+    // shared pass store does for the speakers panel buttons.
+    await rerender(view, [{ id: 't1', timestamp: 0, text: 'Old words' }], {
+      ...props,
+      isDiarizing: true,
+    });
+
+    expect(invoke.mock.calls).toEqual([
+      ['api_update_transcript_text', { transcriptId: 't1', text: 'Draft before the run' }],
+    ]);
+    expect(edited.mock.calls).toEqual([['t1', 'Draft before the run']]);
+    expect(textarea(view)).toBeUndefined();
+  });
+
+  test('a diarization run starting over an untouched editor just closes it', async () => {
+    const edited = mock(async (_id: string, _text: string) => {});
+    const props: Partial<ViewProps> = { onTextEdited: edited, isDiarizing: false };
+    const view = await render(
+      [{ id: 't1', timestamp: 0, text: 'Same as before' }],
+      props,
+    );
+
+    await openEditor(view);
+
+    await rerender(view, [{ id: 't1', timestamp: 0, text: 'Same as before' }], {
+      ...props,
+      isDiarizing: true,
+    });
+
+    // Nothing was edited: closing stores nothing, the run's own data wins.
+    expect(invoke).not.toHaveBeenCalled();
+    expect(edited).not.toHaveBeenCalled();
+    expect(textarea(view)).toBeUndefined();
   });
 });

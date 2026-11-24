@@ -38,6 +38,8 @@ interface TranscriptPanelProps {
 
   // Inline text editing of a saved row (meeting page only)
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+  /** Whether a diarization pass runs for this meeting; closes text editing. */
+  isDiarizing?: boolean;
 }
 
 export function TranscriptPanel({
@@ -62,6 +64,7 @@ export function TranscriptPanel({
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
+  isDiarizing,
 }: TranscriptPanelProps) {
   const { t } = useTranslation();
   // Convert transcripts to segments if pagination is not used but we want virtualization
@@ -115,6 +118,7 @@ export function TranscriptPanel({
           meetingSpeakers={meetingSpeakers}
           onSpeakerChange={onSpeakerChanged}
           onTextEdited={onTextEdited}
+          isDiarizing={isDiarizing}
         />
       </div>
 
