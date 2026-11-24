@@ -36,6 +36,7 @@ export default function PageContent({
   onLoadMore,
   meetingSpeakers,
   onSpeakerChanged,
+  onTextEdited,
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
@@ -54,6 +55,8 @@ export default function PageContent({
   // Speakers of this meeting, used by the per-row dropdown
   meetingSpeakers?: MeetingSpeaker[];
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
+  /** A row's saved text edit, applied to the pagination state by the page. */
+  onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
 }) {
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
@@ -222,6 +225,7 @@ export default function PageContent({
               onRefetchTranscripts={onRefetchTranscripts}
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
+              onTextEdited={onTextEdited}
             />
           }
           summary={

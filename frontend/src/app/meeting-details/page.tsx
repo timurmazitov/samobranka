@@ -52,6 +52,7 @@ function MeetingDetailsContent() {
     refetch,
     refetchMetadata,
     setTranscriptSpeaker,
+    setTranscriptText,
     error: transcriptError,
   } = usePaginatedTranscripts({ meetingId: meetingId || '' });
 
@@ -91,6 +92,13 @@ function MeetingDetailsContent() {
     setTranscriptSpeaker(transcriptId, label, speakerName);
     await loadMeetingSpeakers();
   }, [meetingSpeakers, setTranscriptSpeaker, loadMeetingSpeakers]);
+
+  // A text edit changes only that row's text: the saved value is applied in
+  // place, no refetch. The callback must stay referentially stable so the
+  // memoized rows do not re-render on every keystroke elsewhere.
+  const handleTextEdited = useCallback(async (transcriptId: string, text: string) => {
+    setTranscriptText(transcriptId, text);
+  }, [setTranscriptText]);
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {
@@ -360,6 +368,7 @@ function MeetingDetailsContent() {
     onRefetchTranscripts={refetchTranscriptsAndSpeakers}
     meetingSpeakers={meetingSpeakers}
     onSpeakerChanged={handleSpeakerChanged}
+    onTextEdited={handleTextEdited}
     // Pagination props for efficient transcript loading
     segments={segments}
     hasMore={hasMore}

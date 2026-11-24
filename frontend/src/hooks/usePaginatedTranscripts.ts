@@ -29,6 +29,8 @@ interface UsePaginatedTranscriptsReturn {
     refetchMetadata: () => Promise<void>;
     /** Apply a row's speaker edit locally (after the backend accepted it). */
     setTranscriptSpeaker: (transcriptId: string, label: string | null, speakerName?: string | null) => void;
+    /** Apply a row's text edit locally (after the backend accepted it). */
+    setTranscriptText: (transcriptId: string, text: string) => void;
 }
 
 /**
@@ -235,6 +237,14 @@ export function usePaginatedTranscripts({
         )));
     }, []);
 
+    // A text edit changes only the row's text; timings and speaker stay, so
+    // the same in-place map keeps the row visible without a refetch.
+    const setTranscriptText = useCallback((transcriptId: string, text: string) => {
+        setTranscripts(prev => prev.map(t => (
+            t.id === transcriptId ? { ...t, text } : t
+        )));
+    }, []);
+
     return {
         metadata,
         segments,
@@ -250,5 +260,6 @@ export function usePaginatedTranscripts({
         refetch,
         refetchMetadata,
         setTranscriptSpeaker,
+        setTranscriptText,
     };
 }
