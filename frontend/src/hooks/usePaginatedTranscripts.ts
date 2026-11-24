@@ -49,8 +49,12 @@ interface UsePaginatedTranscriptsReturn {
      * disappear optimistically and `totalCount`/the page offset follow; on
      * failure the rows return in their original order and the counter is
      * restored, then the error is rethrown so the caller can toast.
+     * `refetchWindow` reloads the currently loaded window after the batch
+     * lands (the bulk delete path): offset pagination shifts rows back by
+     * the deleted count, and the reload brings the rows that slid into the
+     * freed places at once instead of waiting for the next `loadMore`.
      */
-    deleteTranscripts: (ids: string[]) => Promise<void>;
+    deleteTranscripts: (ids: string[], options?: { refetchWindow?: boolean }) => Promise<void>;
 }
 
 /**
@@ -133,7 +137,8 @@ export function usePaginatedTranscripts({
     const loadTranscriptsAtOffset = useCallback(async (
         requestId: number,
         offset: number,
-        append: boolean = true
+        append: boolean = true,
+        limit: number = DEFAULT_PAGE_SIZE,
     ): Promise<Transcript[]> => {
         if (!meetingId || !isCurrentRequest(requestId)) return [];
 
@@ -142,7 +147,7 @@ export function usePaginatedTranscripts({
                 'api_get_meeting_transcripts',
                 {
                     meetingId,
-                    limit: DEFAULT_PAGE_SIZE,
+                    limit,
                     offset,
                 }
             );
@@ -331,7 +336,10 @@ export function usePaginatedTranscripts({
     // `loadMore` silently skips the rows that slid into the passed range.
     // `hasMore` goes honest: when the loaded rows now cover the total, there
     // is nothing left to fetch even though the old server total said more.
-    const deleteTranscripts = useCallback(async (ids: string[]) => {
+    const deleteTranscripts = useCallback(async (
+        ids: string[],
+        options?: { refetchWindow?: boolean },
+    ) => {
         const uniqueIds = Array.from(new Set(ids));
         if (uniqueIds.length === 0) return;
 
@@ -371,7 +379,25 @@ export function usePaginatedTranscripts({
             }
             throw error;
         }
-    }, [meetingId, isCurrentRequest]);
+
+        // The bulk path reloads the current window from the server: the rows
+        // that slid into the deleted rows' places appear immediately, and the
+        // fresh total_count/has_more replace the optimistic counters. The
+        // window is rows [0, loadedCount) — the loaded list always starts at
+        // the transcript's beginning (append-only pagination) — so the reload
+        // asks for that many rows from 0, never a stale mid-list offset with
+        // a default page limit (that would truncate a multi-page list). At
+        // least a full page comes back, so deleting every loaded row of a
+        // partially loaded meeting pulls the tail rows in instead of
+        // stranding an empty list that the scroll trigger (rows > 0 only)
+        // cannot revive. A failed reload leaves the honest optimistic state
+        // in place: the delete itself already succeeded. `offsetRef.current`
+        // is the post-delete loaded count (already moved back above).
+        if (options?.refetchWindow) {
+            const windowSize = Math.max(offsetRef.current, DEFAULT_PAGE_SIZE);
+            await loadTranscriptsAtOffset(requestId, 0, false, windowSize);
+        }
+    }, [meetingId, isCurrentRequest, loadTranscriptsAtOffset]);
 
     return {
         metadata,
