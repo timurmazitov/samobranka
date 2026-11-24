@@ -128,12 +128,12 @@ export function TranscriptButtonGroup({
           <Button
             size="sm"
             variant="outline"
-            className="px-2 @[22rem]:px-3"
+            className="px-2"
             onClick={onOpenFind}
             title={t('findReplace.openTooltip')}
+            aria-label={t('findReplace.openTooltip')}
           >
             <Search size={18} />
-            <span className="hidden @[22rem]:inline">{t('findReplace.button')}</span>
           </Button>
         )}
       </ButtonGroup>

@@ -15,7 +15,7 @@ const invoke = mock((command: string, args: Record<string, unknown>) => new Prom
   requests.push({ command, args, resolve, reject });
 }));
 mock.module('@tauri-apps/api/core', () => ({ ...originalCore, invoke }));
-const { useFindReplace, ReplaceAllPartialFailureError } = await import('../../src/hooks/meeting-details/useFindReplace');
+const { useFindReplace, ReplaceAllPartialFailureError, matchContainerId } = await import('../../src/hooks/meeting-details/useFindReplace');
 const { usePaginatedTranscripts } = await import('../../src/hooks/usePaginatedTranscripts');
 afterAll(() => mock.module('@tauri-apps/api/core', () => originalCore));
 
@@ -99,13 +99,16 @@ describe('useFindReplace combined transcript → summary list', () => {
     // SEGMENTS hit «alpha» in s1 (0..5) and twice in s3; the summary blocks
     // follow in their own order — one shared list, shared indices.
     expect(state.matches).toEqual([
-      { key: 'transcript:s1:0', source: 'transcript', segmentId: 's1', from: 0, to: 5 },
-      { key: 'transcript:s3:0', source: 'transcript', segmentId: 's3', from: 4, to: 9 },
-      { key: 'transcript:s3:1', source: 'transcript', segmentId: 's3', from: 22, to: 27 },
-      { key: 'summary:b1:0', source: 'summary', blockId: 'b1', from: 0, to: 5 },
-      { key: 'summary:b2:0', source: 'summary', blockId: 'b2', from: 0, to: 5 },
-      { key: 'summary:b2:1', source: 'summary', blockId: 'b2', from: 16, to: 21 },
+      { source: 'transcript', segmentId: 's1', from: 0, to: 5 },
+      { source: 'transcript', segmentId: 's3', from: 4, to: 9 },
+      { source: 'transcript', segmentId: 's3', from: 22, to: 27 },
+      { source: 'summary', blockId: 'b1', from: 0, to: 5 },
+      { source: 'summary', blockId: 'b2', from: 0, to: 5 },
+      { source: 'summary', blockId: 'b2', from: 16, to: 21 },
     ]);
+    // The one container discriminator: segment ids on the transcript side,
+    // block ids on the summary side.
+    expect(state.matches.map(matchContainerId)).toEqual(['s1', 's3', 's3', 'b1', 'b2', 'b2']);
     expect(state.total).toBe(6);
     expect(state.current).toBe(1);
   });
@@ -163,20 +166,16 @@ describe('useFindReplace combined transcript → summary list', () => {
     await act(async () => { state.setCaseSensitive(true); });
     // Lowercase «alpha» only — s1's «Alpha» and the summary's «Alpha twice»
     // drop out; the toggle acts on the summary matches just like transcripts.
-    expect(state.matches.map(m => m.key)).toEqual([
-      'transcript:s3:0',
-      'transcript:s3:1',
-      'summary:b1:0',
-      'summary:b2:0',
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual([
+      'transcript:s3', 'transcript:s3', 'summary:b1', 'summary:b2',
     ]);
 
     await setQuery('Alpha');
     // Capital «Alpha»: s1's leading word and the summary's «Alpha twice» —
-    // both sources again, transcript first, per-block occurrence indexes
-    // restart per block (b2's single case-sensitive hit is index 0).
+    // both sources again, transcript first.
     expect(state.matches).toEqual([
-      { key: 'transcript:s1:0', source: 'transcript', segmentId: 's1', from: 0, to: 5 },
-      { key: 'summary:b2:0', source: 'summary', blockId: 'b2', from: 16, to: 21 },
+      { source: 'transcript', segmentId: 's1', from: 0, to: 5 },
+      { source: 'summary', blockId: 'b2', from: 16, to: 21 },
     ]);
   });
 
@@ -198,7 +197,7 @@ describe('useFindReplace combined transcript → summary list', () => {
     await showWithSummary();
     await setQuery('overview');
     expect(state.matches).toEqual([
-      { key: 'summary:b1:0', source: 'summary', blockId: 'b1', from: 6, to: 14 },
+      { source: 'summary', blockId: 'b1', from: 6, to: 14 },
     ]);
     expect(state.current).toBe(1);
     expect(state.total).toBe(1);
@@ -219,9 +218,9 @@ describe('useFindReplace match list', () => {
     await setQuery('alpha');
 
     expect(state.matches).toEqual([
-      { key: 'transcript:s1:0', source: 'transcript', segmentId: 's1', from: 0, to: 5 },
-      { key: 'transcript:s3:0', source: 'transcript', segmentId: 's3', from: 4, to: 9 },
-      { key: 'transcript:s3:1', source: 'transcript', segmentId: 's3', from: 22, to: 27 },
+      { source: 'transcript', segmentId: 's1', from: 0, to: 5 },
+      { source: 'transcript', segmentId: 's3', from: 4, to: 9 },
+      { source: 'transcript', segmentId: 's3', from: 22, to: 27 },
     ]);
     expect(state.activeIndex).toBe(0);
     expect(state.noMatches).toBe(false);
@@ -241,7 +240,7 @@ describe('useFindReplace match list', () => {
     await setQuery('uh');
 
     expect(state.matches).toEqual([
-      { key: 'transcript:s5:0', source: 'transcript', segmentId: 's5', from: 0, to: 2 },
+      { source: 'transcript', segmentId: 's5', from: 0, to: 2 },
     ]);
   });
 
@@ -259,7 +258,7 @@ describe('useFindReplace match list', () => {
 
     await setQuery('Бета');
     expect(state.matches).toEqual([
-      { key: 'transcript:s2:0', source: 'transcript', segmentId: 's2', from: 12, to: 16 },
+      { source: 'transcript', segmentId: 's2', from: 12, to: 16 },
     ]);
   });
 
@@ -454,7 +453,7 @@ describe('useFindReplace with the paginated host', () => {
 
     // The newly loaded page joins the same match list.
     expect(state.matches).toEqual([
-      { key: 'transcript:t2:0', source: 'transcript', segmentId: 't2', from: 12, to: 16 },
+      { source: 'transcript', segmentId: 't2', from: 12, to: 16 },
     ]);
     // Nothing more to load: the loop stops when the backend says so.
     expect(requests.filter(r => r.command === 'api_get_meeting_transcripts')).toHaveLength(2);
@@ -547,9 +546,9 @@ describe('useFindReplace replacement', () => {
     await act(async () => { edits[0].resolve({ message: 'ok' }); });
 
     expect(state.matches).toEqual([
-      { key: 'transcript:t1:0', source: 'transcript', segmentId: 't1', from: 6, to: 10 },
-      { key: 'transcript:t1:1', source: 'transcript', segmentId: 't1', from: 11, to: 15 },
-      { key: 'transcript:t2:0', source: 'transcript', segmentId: 't2', from: 0, to: 4 },
+      { source: 'transcript', segmentId: 't1', from: 6, to: 10 },
+      { source: 'transcript', segmentId: 't1', from: 11, to: 15 },
+      { source: 'transcript', segmentId: 't2', from: 0, to: 4 },
     ]);
     expect(state.activeIndex).toBe(1);
   });
@@ -648,7 +647,39 @@ describe('useFindReplace replacement', () => {
     // to that same match rather than jumping to the list head.
     expect(state.matches.map(m => m.segmentId)).toEqual(['t1', 't2']);
     expect(state.activeIndex).toBe(1);
-    expect(state.matches[1]).toEqual({ key: 'transcript:t2:0', source: 'transcript', segmentId: 't2', from: 0, to: 4 });
+    expect(state.matches[1]).toEqual({ source: 'transcript', segmentId: 't2', from: 0, to: 4 });
+  });
+
+  test('a rolled-back replacement never lands on the list head during the rollback window', async () => {
+    // The restore-anchor flicker guard: between the failed save and the
+    // arrival of the rolled-back text the list can recompute through states
+    // that no longer contain the failed match (the host may take an extra
+    // render to report the row back). The ordinary «new list → index 0»
+    // reset must stay suppressed while the restore is pending, so the active
+    // position never transiently lands on index 0 before the restore lands
+    // back on the match the user could not save.
+    await hosted();
+    await setQuery('beta');
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(1); // the t2 match
+
+    let observedIndices: number[] = [];
+    await act(async () => {
+      state.setReplaceText('gamma');
+      // Watch every commit between the click and the settled rollback: a
+      // 0 here would be the flicker (index 0 is t1's still-present match).
+      observedIndices = [];
+    });
+    await act(async () => { void state.replaceActive().catch(() => {}); });
+    // The optimistic rewrite is in the state; the failure has not landed.
+    observedIndices.push(state.activeIndex);
+    await act(async () => { editRequests()[0].reject(new Error('database is locked')); });
+    observedIndices.push(state.activeIndex);
+
+    expect(observedIndices).not.toContain(0);
+    // Settled: back on the t2 match, exactly as the plain rollback test pins.
+    expect(state.activeIndex).toBe(1);
+    expect(host.segments[1].text).toBe('beta mid and alpha tail');
   });
 
   test('replace all with one failed segment leaves only that segment\'s matches', async () => {
@@ -674,7 +705,7 @@ describe('useFindReplace replacement', () => {
     // no «beta» and drops out of the list. No stale ranges survive either way.
     expect(host.segments.map(s => s.text)).toEqual(['Alpha beta gamma', 'Zeta mid and Zeta tail']);
     expect(state.matches).toEqual([
-      { key: 'transcript:t1:0', source: 'transcript', segmentId: 't1', from: 6, to: 10 },
+      { source: 'transcript', segmentId: 't1', from: 6, to: 10 },
     ]);
     expect(state.activeIndex).toBe(0);
     // The caller is told exactly how many saves failed — with no raw text.
@@ -753,7 +784,7 @@ describe('useFindReplace summary replacement', () => {
     await showSummary();
     await setQuery('alpha');
     // b1's «alpha» first, then b2's «Alpha» (case-insensitive by default).
-    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual(['summary:b1', 'summary:b2']);
     expect(state.activeIndex).toBe(0);
 
     await act(async () => { state.setReplaceText('Zeta'); });
@@ -766,7 +797,7 @@ describe('useFindReplace summary replacement', () => {
 
     // The recomputed list (from the new block text): only b2's match is left,
     // and navigation lands on it — the VS Code advance.
-    expect(state.matches.map(m => m.key)).toEqual(['summary:b2:0']);
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual(['summary:b2']);
     expect(state.activeIndex).toBe(0);
     expect(state.current).toBe(1);
     expect(state.total).toBe(1);
@@ -786,7 +817,7 @@ describe('useFindReplace summary replacement', () => {
     ]);
     // The replaced match was the list's last one; no match sits strictly
     // after its range, so navigation wraps to the surviving b1 match.
-    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0']);
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual(['summary:b1']);
     expect(state.activeIndex).toBe(0);
     expect(state.current).toBe(1);
     expect(state.total).toBe(1);
@@ -821,7 +852,7 @@ describe('useFindReplace summary replacement', () => {
     await act(async () => { void state.replaceActive(); });
 
     expect(summaryCalls).toHaveLength(1);
-    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual(['summary:b1', 'summary:b2']);
     expect(state.activeIndex).toBe(0);
   });
 
@@ -918,7 +949,7 @@ describe('useFindReplace summary replacement', () => {
     // The skipped batch is not a failure toast-worthy event: no throw, and
     // the summary matches are still there because their text never changed.
     expect(summaryCalls).toHaveLength(1);
-    expect(state.matches.map(m => m.key)).toEqual(['summary:b1:0', 'summary:b2:0']);
+    expect(state.matches.map(m => `${m.source}:${matchContainerId(m)}`)).toEqual(['summary:b1', 'summary:b2']);
   });
 
   test('without a summary-replace path summary matches stay out of the replace-all count', async () => {

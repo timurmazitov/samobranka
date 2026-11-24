@@ -1,5 +1,6 @@
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 
+import { spliceMatchRange } from './find-matches';
 import { mapBlockTextRangeToPositions, toPMBlockEntry, type PMBlockEntry } from './summary-find-reveal';
 
 /**
@@ -137,10 +138,7 @@ export function applyLegacySummaryReplacements<T extends object>(
   const spliced = new Map<string, string>();
   for (const edit of [...edits].sort((a, b) => b.from - a.from)) {
     const current = spliced.get(edit.blockId) ?? currentById.get(edit.blockId)!;
-    spliced.set(
-      edit.blockId,
-      current.slice(0, edit.from) + edit.replacement + current.slice(edit.to),
-    );
+    spliced.set(edit.blockId, spliceMatchRange(current, edit, edit.replacement));
   }
 
   // Rebuild the section map immutably: only touched blocks are replaced.

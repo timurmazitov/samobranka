@@ -3,8 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildBlockNoteSummaryBlocks,
   buildLegacySummaryBlocks,
-  buildSummaryMatches,
-} from '../../src/hooks/meeting-details/useFindReplace';
+} from '../../src/lib/summary-find-blocks';
+import { buildSummaryMatches } from '../../src/hooks/meeting-details/useFindReplace';
 
 /**
  * The summary match contract, pinned independently of any editor: matches are
@@ -22,9 +22,9 @@ describe('buildSummaryMatches', () => {
 
   test('one match per occurrence in display order with block-keyed ranges', () => {
     expect(buildSummaryMatches(blocks, 'beta', {})).toEqual([
-      { key: 'summary:b1:0', source: 'summary', blockId: 'b1', from: 6, to: 10 },
-      { key: 'summary:b2:0', source: 'summary', blockId: 'b2', from: 0, to: 4 },
-      { key: 'summary:b2:1', source: 'summary', blockId: 'b2', from: 12, to: 16 },
+      { source: 'summary', blockId: 'b1', from: 6, to: 10 },
+      { source: 'summary', blockId: 'b2', from: 0, to: 4 },
+      { source: 'summary', blockId: 'b2', from: 12, to: 16 },
     ]);
   });
 

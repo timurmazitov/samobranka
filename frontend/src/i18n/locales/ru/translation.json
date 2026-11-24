@@ -1083,7 +1083,6 @@
   "findReplace": {
     "title": "Найти и заменить",
     "openTooltip": "Найти и заменить в транскрипте",
-    "button": "Поиск",
     "searchPlaceholder": "Искать",
     "replacePlaceholder": "Заменить",
     "replace": "Заменить",
