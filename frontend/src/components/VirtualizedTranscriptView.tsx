@@ -118,6 +118,12 @@ export interface VirtualizedTranscriptViewProps {
      * on failure so the bar toasts. Absent on the live panel.
      */
     onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+    /**
+     * Leave the selection mode and clear the id set (ticket 04): the pencil
+     * calls it before opening an inline editor, so the two bulk modes over
+     * the same rows never run together. Absent on the live panel.
+     */
+    onExitSelection?: () => void;
 
     // Find & replace (meeting page). `findOpen` is the mode switch: while it
     // is true rows show their raw text and get <mark>s from `findMatches`.
@@ -210,6 +216,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     selectionMode,
     isSelected,
     onToggleSelected,
+    onExitSelection,
     highlights,
     activeMatch,
 }: {
@@ -243,6 +250,12 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isSelected?: boolean;
     /** Flip this row's checkbox; the page owns the id set. Absent on the live panel. */
     onToggleSelected?: (transcriptId: string) => void;
+    /**
+     * Leave the selection mode and clear the id set (ticket 04): the pencil
+     * asks the host to drop the mode before opening the editor. Absent on
+     * the live panel.
+     */
+    onExitSelection?: () => void;
     /**
      * Find-panel ranges for this row. `undefined` means the panel is closed:
      * the normal filler-cleaned display. An array (possibly empty) means the
@@ -361,6 +374,21 @@ const TranscriptSegment = memo(function TranscriptSegment({
         // from the render that flipped it, which is the current draft.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [allowTextEdit]);
+
+    // Mode exclusivity (ticket 04): entering the selection mode over an open
+    // editor must not drop the draft either — the same flush-and-close as the
+    // diarization gate, watched on the mode itself. It fires only on the
+    // transition into the mode, so the pencil opening an editor while the
+    // host is dropping the mode never re-triggers it (the mode left, it did
+    // not arrive).
+    useEffect(() => {
+        if (selectionMode && isEditing) {
+            void saveDraft();
+        }
+        // Same rule as the gate effect: the mode transition is the trigger,
+        // the draft comes from the render that flipped it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectionMode]);
 
     // Optimistic row state: set as soon as the user picks an item, cleared
     // once the refetched segment arrives (or on failure).
@@ -530,6 +558,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        // Exclusivity (ticket 04): an inline
+                                        // editor and the selection mode never
+                                        // share the rows, so opening one asks
+                                        // the host to drop the other first.
+                                        onExitSelection?.();
                                         // Seed from the RAW text, never the cleaned display.
                                         setDraft(text);
                                         editingRef.current = true;
@@ -596,6 +629,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     selectedIds,
     onToggleSelected,
     onSegmentsBulkDeleted,
+    onExitSelection,
     findOpen = false,
     findMatches,
     findActiveIndex = -1,
@@ -907,6 +941,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         selectionMode={canBulkDelete}
                                         isSelected={selection.includes(segment.id)}
                                         onToggleSelected={onToggleSelected}
+                                        onExitSelection={onExitSelection}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
@@ -981,6 +1016,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         selectionMode={canBulkDelete}
                                         isSelected={selection.includes(segment.id)}
                                         onToggleSelected={onToggleSelected}
+                                        onExitSelection={onExitSelection}
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
