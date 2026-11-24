@@ -337,6 +337,53 @@ describe('regenerate-summary hint on the meeting page', () => {
     expect(panelProps.selectedIds).toEqual(['t1', 't2']);
   });
 
+  // Ticket 05: a successful bulk delete makes the summary stale through the
+  // very same id-deduped hint chain an edit or a single delete uses — once per
+  // batch, not per segment — while a rejected batch must neither claim
+  // staleness nor swallow the error the toolbar toasts on.
+  test('a bulk delete while a completed summary exists offers regeneration once', async () => {
+    summaryStatus = 'completed';
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.id).toBe('transcript-edit-summary-hint');
+    expect(options.action.label).toBe('Regenerate Summary');
+
+    await act(async () => { options.action.onClick(); });
+    expect(regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  test('a bulk delete with no summary shows no hint', async () => {
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(infoNotify).not.toHaveBeenCalled();
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+
+  test('a rejected bulk delete shows no hint and keeps propagating to the toolbar', async () => {
+    summaryStatus = 'completed';
+    let thrown: unknown = null;
+    await show({ onSegmentsBulkDeleted: async () => { throw new Error('transcript not found: t2'); } });
+
+    await act(async () => {
+      try { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(infoNotify).not.toHaveBeenCalled();
+  });
+
   // The delete button's data: the page hands the panel a working callback
   // built on the pagination hook's batch delete, so the live page never
   // shows a trash that deletes nothing.

@@ -199,11 +199,16 @@ export default function PageContent({
   // After a successful batch the deleted ids are gone, so the selection
   // empties while the mode stays open for further cleaning; a rejection
   // keeps the selection intact so the user can retry after the rollback.
-  // The stale-summary hint for bulk delete is ticket 05's call to add here.
+  // A batch delete removes rows the summary was built from, so it makes an
+  // existing summary stale exactly like an edit or a single delete (ticket
+  // 05): one hint per batch through the same id-deduped chain, only after
+  // the batch resolves — a rejection propagates to the toolbar (its toast)
+  // and skips the hint.
   const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
     await onSegmentsBulkDeleted?.(transcriptIds);
     setSelectedSegments([]);
-  }, [onSegmentsBulkDeleted, setSelectedSegments]);
+    notifySummaryStale();
+  }, [onSegmentsBulkDeleted, setSelectedSegments, notifySummaryStale]);
 
   const copyOperations = useCopyOperations({
     meeting,
