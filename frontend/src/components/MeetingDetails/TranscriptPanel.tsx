@@ -4,6 +4,7 @@ import { MeetingSpeaker, Transcript, TranscriptSegmentData } from '@/types';
 import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
+import type { Match } from '@/hooks/meeting-details/useFindReplace';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import '@/i18n';
@@ -40,6 +41,13 @@ interface TranscriptPanelProps {
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
   /** Whether a diarization pass runs for this meeting; closes text editing. */
   isDiarizing?: boolean;
+
+  // Find & replace (meeting page only): opens the floating panel and drives
+  // the row highlights through the virtualized view.
+  onOpenFind?: () => void;
+  findOpen?: boolean;
+  findMatches?: Match[];
+  findActiveIndex?: number;
 }
 
 export function TranscriptPanel({
@@ -65,6 +73,10 @@ export function TranscriptPanel({
   onSpeakerChanged,
   onTextEdited,
   isDiarizing,
+  onOpenFind,
+  findOpen,
+  findMatches,
+  findActiveIndex,
 }: TranscriptPanelProps) {
   const { t } = useTranslation();
   // Convert transcripts to segments if pagination is not used but we want virtualization
@@ -96,6 +108,7 @@ export function TranscriptPanel({
           meetingId={meetingId}
           meetingFolderPath={meetingFolderPath}
           onRefetchTranscripts={onRefetchTranscripts}
+          onOpenFind={onOpenFind}
         />
       </div>
 
@@ -119,6 +132,9 @@ export function TranscriptPanel({
           onSpeakerChange={onSpeakerChanged}
           onTextEdited={onTextEdited}
           isDiarizing={isDiarizing}
+          findOpen={findOpen}
+          findMatches={findMatches}
+          findActiveIndex={findActiveIndex}
         />
       </div>
 

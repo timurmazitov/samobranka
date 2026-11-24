@@ -1080,6 +1080,17 @@
     "homeExport": "Экспорт",
     "homeLanguage": "Язык"
   },
+  "findReplace": {
+    "title": "Найти и заменить",
+    "openTooltip": "Найти и заменить в транскрипте",
+    "button": "Поиск",
+    "searchPlaceholder": "Искать",
+    "replacePlaceholder": "Заменить",
+    "previousMatch": "Предыдущее совпадение",
+    "nextMatch": "Следующее совпадение",
+    "caseSensitive": "Учитывать регистр",
+    "wholeWord": "Слово целиком"
+  },
   "summary": {
     "stopTooltip": "Остановить создание конспекта",
     "stop": "Стоп",

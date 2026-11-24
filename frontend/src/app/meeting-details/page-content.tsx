@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
 import { MeetingDetailsSplitView, type MeetingDetailsTab } from '@/components/MeetingDetails/MeetingDetailsSplitView';
+import { FindReplacePanel } from '@/components/MeetingDetails/FindReplacePanel';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -18,6 +19,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useFindReplace } from '@/hooks/meeting-details/useFindReplace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
@@ -36,6 +38,7 @@ export default function PageContent({
   totalCount,
   loadedCount,
   onLoadMore,
+  onLoadAllPages,
   meetingSpeakers,
   onSpeakerChanged,
   onTextEdited,
@@ -54,6 +57,8 @@ export default function PageContent({
   totalCount?: number;
   loadedCount?: number;
   onLoadMore?: () => void;
+  /** Drain every remaining transcript page (find panel's first-open load). */
+  onLoadAllPages?: () => void | Promise<void>;
   // Speakers of this meeting, used by the per-row dropdown
   meetingSpeakers?: MeetingSpeaker[];
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
@@ -82,7 +87,7 @@ export default function PageContent({
   const autoGenerationStartedMeetingIdRef = useRef<string | null>(null);
 
   // Sidebar context
-  const { serverAddress } = useSidebar();
+  const { serverAddress, isCollapsed } = useSidebar();
 
   // Get model config from ConfigContext
   const { modelConfig, setModelConfig, isModelConfigLoading } = useConfig();
@@ -168,6 +173,49 @@ export default function PageContent({
     meeting,
   });
 
+  // The find & replace panel's state: query, toggles, the combined match
+  // list over the loaded segments, and the active position. The first open
+  // drains every segment page through the pagination hook so matches cover
+  // the whole meeting.
+  const findReplace = useFindReplace({
+    segments: segments ?? [],
+    loadAllPages: onLoadAllPages,
+  });
+  const { openPanel, closePanel } = findReplace;
+
+  // Page hotkeys — the meeting page's only document keydown listener. Ctrl/Cmd
+  // +F and +H are intercepted with preventDefault, which also suppresses the
+  // webview's native find; +H focuses the replace field. Esc closes. No
+  // hotkey library: the legacy summary editor's Ctrl handler is the precedent.
+  useEffect(() => {
+    // Headless render environments (react-test-renderer) have no document,
+    // and a polluted test process can hold a partial stub: register only on
+    // a real DOM. A real webview always has one.
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Physical key codes too: on a Cyrillic layout Ctrl+Ф arrives as key
+      // 'а', and the panel must still open.
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (event.code === 'KeyF' || event.key === 'f' || event.key === 'F') {
+          event.preventDefault();
+          openPanel({ focus: 'search' });
+        } else if (event.code === 'KeyH' || event.key === 'h' || event.key === 'H') {
+          event.preventDefault();
+          openPanel({ focus: 'replace' });
+        }
+      } else if (event.key === 'Escape' && !event.defaultPrevented) {
+        // A row editor's Escape cancels the edit and marks the event handled;
+        // only an unclaimed Escape closes the panel.
+        closePanel();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [openPanel, closePanel]);
+
   useEffect(() => {
     if (
       (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
@@ -245,6 +293,10 @@ export default function PageContent({
               onSpeakerChanged={onSpeakerChanged}
               onTextEdited={handleTranscriptTextEdited}
               isDiarizing={isDiarizing}
+              onOpenFind={() => openPanel({ focus: 'search' })}
+              findOpen={findReplace.open}
+              findMatches={findReplace.matches}
+              findActiveIndex={findReplace.activeIndex}
             />
           }
           summary={
@@ -282,6 +334,26 @@ export default function PageContent({
           }
         />
       </div>
+
+      {/* The find & replace card: fixed, non-modal, sidebar-compensated. */}
+      <FindReplacePanel
+        open={findReplace.open}
+        query={findReplace.query}
+        onQueryChange={findReplace.setQuery}
+        caseSensitive={findReplace.caseSensitive}
+        onCaseSensitiveChange={findReplace.setCaseSensitive}
+        wholeWord={findReplace.wholeWord}
+        onWholeWordChange={findReplace.setWholeWord}
+        current={findReplace.current}
+        total={findReplace.total}
+        hasQuery={findReplace.hasQuery}
+        onPrevious={findReplace.goPrev}
+        onNext={findReplace.goNext}
+        onClose={closePanel}
+        focusTarget={findReplace.focusTarget}
+        focusNonce={findReplace.focusNonce}
+        sidebarCollapsed={isCollapsed}
+      />
     </motion.div>
   );
 }
