@@ -975,6 +975,9 @@
     },
     "diarization": {
       "failed": "Diarization failed"
+    },
+    "transcriptEdit": {
+      "summaryOutdated": "The summary no longer matches your edited transcript."
     }
   },
   "speakers": {
@@ -1043,6 +1046,9 @@
     "speakerAttributedDiarization": "Speaker attributed by diarization ({{speaker}})",
     "speakerChipClickToChange": "{{title}} — click to change",
     "updateSpeakerFailed": "Failed to update speaker",
+    "editTextTooltip": "Edit text",
+    "updateTextFailed": "Failed to update text",
+    "updateTextFailedDescription": "The changes to this line were not saved.",
     "homeCopyTitle": "Copy Transcript",
     "homeExportTitle": "Export Transcript",
     "homeLanguageTitle": "Language",

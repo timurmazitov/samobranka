@@ -1,13 +1,36 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 
 import {
   formatSpeakerDisplayLabel,
   formatTranscriptText,
   formatTranscriptTime,
   hasSpeakerLabels,
+  normalizeTranscriptText,
   orderMeetingSpeakersForChip,
 } from '../../src/lib/transcript-format';
 import type { MeetingSpeaker, Transcript } from '../../src/types';
+
+// The Rust repository's normalize_transcript_text is authoritative for the
+// saved text; this TypeScript mirror keeps the optimistic row value equal to
+// what the database will store. One shared fixture pins both sides (the Rust
+// side reads the same file), mirroring how live-diarization.test.ts pins
+// DIARIZATION_BAND_START against progress_scale.rs.
+type NormalizeCase = { description: string; input: string; expected: string };
+const normalizeCases: NormalizeCase[] = JSON.parse(
+  readFileSync(
+    new URL('../../src-tauri/tests/fixtures/transcript-normalize.json', import.meta.url),
+    'utf8',
+  ),
+).cases;
+
+describe('normalizeTranscriptText mirrors the Rust repository normalizer', () => {
+  for (const testCase of normalizeCases) {
+    test(testCase.description, () => {
+      expect(normalizeTranscriptText(testCase.input)).toBe(testCase.expected);
+    });
+  }
+});
 
 function segment(overrides: Partial<Transcript> = {}): Transcript {
   return {

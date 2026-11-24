@@ -27,6 +27,7 @@ import {
     orderMeetingSpeakersForChip,
 } from "@/lib/transcript-format";
 import '@/i18n';
+import { normalizeTranscriptText } from '@/lib/transcript-format';
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -61,6 +62,19 @@ export interface VirtualizedTranscriptViewProps {
     meetingSpeakers?: MeetingSpeaker[];
     /** Called after a row's speaker was changed and refetched from the backend. */
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
+    /**
+     * Called to save a row's edited text; the meeting page routes it to the
+     * pagination hook, which updates the row optimistically and rolls it back
+     * on failure, rethrowing so the row can toast. The live panel passes
+     * nothing, so rows stay inert.
+     */
+    onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+    /**
+     * Whether a diarization pass is running for this meeting. The meeting page
+     * reads it from the shared pass store; rows fold it into the edit gate so
+     * an edit cannot race the pass's row reload.
+     */
+    isDiarizing?: boolean;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -99,6 +113,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
     meetingSpeakers,
     onSpeakerChange,
     allowSpeakerEdit,
+    onTextEdited,
+    allowTextEdit,
 }: {
     id: string;
     timestamp: number;
@@ -112,9 +128,82 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
     /** False while recording and when the host does not support row edits. */
     allowSpeakerEdit: boolean;
+    /** Called to save the row's edited text (host owns optimistic state and rollback); absent on the live panel. */
+    onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+    /** False while recording; text edits exist only on the meeting page. */
+    allowTextEdit: boolean;
 }) {
     const { t } = useTranslation();
-    const displayText = cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text);
+
+    const displayText =
+        cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text);
+
+    // The inline editor: a single-line auto-resizing textarea in place of the
+    // text, following EditableTitle. It opens only from the hover pencil and
+    // is seeded from the RAW text — never the filler-cleaned display — so
+    // saving does not silently drop what the user saw.
+    const [isEditing, setIsEditing] = useState(false);
+    // A mirror of isEditing in a ref: a browser fires focusout when the
+    // focused textarea unmounts, and that stale blur handler still closes over
+    // the old draft. The ref — shared by every closure of the open editor —
+    // says whether an editor is actually open right now.
+    const editingRef = useRef(false);
+    const [draft, setDraft] = useState('');
+    const draftRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        if (draftRef.current && isEditing) {
+            draftRef.current.style.height = 'auto';
+            draftRef.current.style.height = `${draftRef.current.scrollHeight}px`;
+        }
+    }, [draft, isEditing]);
+
+    // The pencil exists only where an editor has a host: the meeting page
+    // passes a callback and opens the gate outside recording and streaming.
+    const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
+
+    const saveDraft = async () => {
+        if (!onTextEdited || !editingRef.current) return;
+        // Close the editor for every save path first: Enter, blur and a late
+        // focusout from the unmount all land here, and only the first call —
+        // the one that found the editor open — may save.
+        editingRef.current = false;
+        setIsEditing(false);
+        const normalized = normalizeTranscriptText(draft);
+        // An unchanged line stores nothing: a no-op Enter must not bump the
+        // meeting. An empty draft does reach the host save path, where the
+        // backend rejects it as the authority, so the user gets the error toast.
+        if (normalized && normalized === text) return;
+
+        // The host save path (page → pagination hook) owns the optimistic
+        // update, the persistence and the rollback. A rejected save rethrows
+        // here, and only this row toasts.
+        try {
+            await onTextEdited(id, normalized);
+        } catch (error) {
+            // The raw failure (possibly a driver-level message) belongs in the
+            // logs only: the toast carries just the translated strings, so no
+            // private meeting content or database detail can reach the user.
+            console.error('Failed to save transcript text:', error);
+            toast.error(t('transcript.updateTextFailed'), {
+                description: t('transcript.updateTextFailedDescription'),
+            });
+        }
+    };
+
+    // A diarization pass that starts mid-edit must not drop the draft: when
+    // the gate closes under an open editor, the draft goes through the same
+    // save path as Enter and the editor closes. The effect only watches the
+    // gate, so the save lands on the single transition into the closed gate
+    // and never loops; an untouched draft closes without a command.
+    useEffect(() => {
+        if (!allowTextEdit && isEditing) {
+            void saveDraft();
+        }
+        // The gate transition is the trigger; draft and callback are read
+        // from the render that flipped it, which is the current draft.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allowTextEdit]);
 
     // Optimistic row state: set as soon as the user picks an item, cleared
     // once the refetched segment arrives (or on failure).
@@ -229,8 +318,66 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                         </div>
+                    ) : isEditing ? (
+                        <textarea
+                            ref={draftRef}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onBlur={() => { void saveDraft(); }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    // Single-line semantics: a transcript stays one
+                                    // logical line, so even Shift+Enter never inserts
+                                    // a newline (unlike EditableTitle).
+                                    e.preventDefault();
+                                    if (!e.shiftKey) {
+                                        void saveDraft();
+                                    }
+                                } else if (e.key === 'Escape') {
+                                    // Cancel: leave the editor without saving,
+                                    // the stored text was never touched. Closing
+                                    // through editingRef means a focusout fired
+                                    // by the unmount below finds no open editor.
+                                    e.preventDefault();
+                                    editingRef.current = false;
+                                    setIsEditing(false);
+                                }
+                            }}
+                            className="w-full text-base text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-2 py-1 resize-none overflow-hidden"
+                            autoFocus
+                            rows={1}
+                        />
                     ) : (
-                        <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
+                        <div className="group flex items-start gap-1">
+                            <p className="flex-1 text-base text-gray-800 leading-relaxed">{displayText}</p>
+                            {canEditText && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        // Seed from the RAW text, never the cleaned display.
+                                        setDraft(text);
+                                        editingRef.current = true;
+                                        setIsEditing(true);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    title={t('transcript.editTextTooltip')}
+                                >
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    >
+                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                                    </svg>
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
@@ -254,8 +401,14 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onLoadMore,
     meetingSpeakers,
     onSpeakerChange,
+    onTextEdited,
+    isDiarizing = false,
 }) => {
     const { t } = useTranslation();
+    // Text edits close while a diarization pass runs: the pass reloads rows,
+    // and an open editor or a mid-save would race that reload. The boolean is
+    // computed once here so every row takes the same gate in both branches.
+    const allowTextEdit = !isRecording && !isDiarizing;
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -439,6 +592,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         meetingSpeakers={dropdownSpeakers}
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
+                                        onTextEdited={onTextEdited}
+                                        allowTextEdit={allowTextEdit}
                                     />
                                 </div>
                             );
@@ -500,6 +655,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         meetingSpeakers={dropdownSpeakers}
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
+                                        onTextEdited={onTextEdited}
+                                        allowTextEdit={allowTextEdit}
                                     />
                                 </motion.div>
                             );

@@ -52,6 +52,7 @@ function MeetingDetailsContent() {
     refetch,
     refetchMetadata,
     setTranscriptSpeaker,
+    setTranscriptText,
     error: transcriptError,
   } = usePaginatedTranscripts({ meetingId: meetingId || '' });
 
@@ -91,6 +92,16 @@ function MeetingDetailsContent() {
     setTranscriptSpeaker(transcriptId, label, speakerName);
     await loadMeetingSpeakers();
   }, [meetingSpeakers, setTranscriptSpeaker, loadMeetingSpeakers]);
+
+  // A text edit changes only that row's text: the pagination hook saves it
+  // optimistically and rolls it back on failure, so this callback just awaits
+  // that save — a rejection must propagate to the row (its toast) and must
+  // not reach the stale-summary hint in page-content. The callback must stay
+  // referentially stable so the memoized rows do not re-render on every
+  // keystroke elsewhere.
+  const handleTextEdited = useCallback(async (transcriptId: string, text: string) => {
+    await setTranscriptText(transcriptId, text);
+  }, [setTranscriptText]);
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {
@@ -360,6 +371,7 @@ function MeetingDetailsContent() {
     onRefetchTranscripts={refetchTranscriptsAndSpeakers}
     meetingSpeakers={meetingSpeakers}
     onSpeakerChanged={handleSpeakerChanged}
+    onTextEdited={handleTextEdited}
     // Pagination props for efficient transcript loading
     segments={segments}
     hasMore={hasMore}

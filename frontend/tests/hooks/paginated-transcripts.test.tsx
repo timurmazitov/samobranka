@@ -43,6 +43,11 @@ function request(command: 'metadata' | 'transcripts', meetingId: string, index =
   expect(result).toBeDefined();
   return result;
 }
+function editRequest(transcriptId: string, index = 0) {
+  const result = requests.filter(r => r.command === 'api_update_transcript_text' && r.args.transcriptId === transcriptId)[index];
+  expect(result).toBeDefined();
+  return result;
+}
 const metadata = (id: string): MeetingMetadata => ({ id, title: id, created_at: '2026-09-07', updated_at: '2026-09-07' });
 const page = (text: string, hasMore = false): PaginatedTranscriptsResponse => ({
   transcripts: [{ id: text, text, timestamp: '00:00', audio_start_time: 0 }],
@@ -178,6 +183,63 @@ describe('paginated transcript request ownership', () => {
     expect(state.segments[0]).toMatchObject({ speaker: 'speaker_1', speaker_name: 'Maria' });
     await act(async () => { state.setTranscriptSpeaker('A', null); });
     expect(state.segments[0]).toMatchObject({ speaker: undefined, speaker_name: undefined });
+  });
+
+  test('a row text edit is visible in the segments before the save is answered', async () => {
+    await load('A');
+    await act(async () => { void state.setTranscriptText('A', 'Fixed words'); });
+    // The optimistic value lands in the segments while the save is still open.
+    expect(state.segments[0].text).toBe('Fixed words');
+    const save = editRequest('A');
+    await resolve(save, { message: 'Transcript text saved successfully' });
+    expect(state.segments[0].text).toBe('Fixed words');
+  });
+
+  test('a rejected text edit rolls the row back to its previous text', async () => {
+    await load('A');
+    let failure: unknown = null;
+    await act(async () => {
+      void state.setTranscriptText('A', 'Never stored').catch(error => { failure = error; });
+    });
+    expect(state.segments[0].text).toBe('Never stored');
+
+    await act(async () => { editRequest('A').reject(new Error('database is locked')); });
+
+    // The hook owns the rollback and rethrows so the row can toast; the test
+    // catches the rejection to keep it from escaping as an unhandled error.
+    expect(state.segments[0].text).toBe('A');
+    expect(String(failure)).toContain('database is locked');
+  });
+
+  test('a pasted multi-line draft saves and shows collapsed', async () => {
+    await load('A');
+    await act(async () => { void state.setTranscriptText('A', '  first  line\n\tsecond   line  '); });
+    expect(state.segments[0].text).toBe('first line second line');
+    expect(editRequest('A').args).toEqual({
+      transcriptId: 'A',
+      text: 'first line second line',
+    });
+    await resolve(editRequest('A'), { message: 'ok' });
+    expect(state.segments[0].text).toBe('first line second line');
+  });
+
+  test('an empty edit reaches the backend without blanking the row', async () => {
+    // The repository is the authority that rejects an empty line, so the save
+    // attempt goes out — but the row is never optimistically blanked.
+    await load('A');
+    let failure: unknown = null;
+    await act(async () => {
+      void state.setTranscriptText('A', '  \n ').catch(error => { failure = error; });
+    });
+    expect(state.segments[0].text).toBe('A');
+    expect(editRequest('A').args).toEqual({ transcriptId: 'A', text: '' });
+
+    await act(async () => {
+      editRequest('A').reject(new Error('transcript text cannot be empty'));
+    });
+
+    expect(state.segments[0].text).toBe('A');
+    expect(String(failure)).toContain('cannot be empty');
   });
 
   test('the metadata keeps the meeting moment the header renders', async () => {

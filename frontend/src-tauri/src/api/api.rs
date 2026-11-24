@@ -1159,6 +1159,40 @@ pub async fn api_set_transcript_speaker<R: Runtime>(
     }
 }
 
+/// Replace the text of a single transcript segment. The stored value is
+/// normalized to one line (whitespace runs collapse, ends trim); an empty or
+/// whitespace-only text is rejected. Timings and speaker are untouched.
+#[tauri::command]
+pub async fn api_update_transcript_text<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    transcript_id: String,
+    text: String,
+) -> Result<serde_json::Value, String> {
+    log_info!(
+        "api_update_transcript_text called for transcript_id: {}, text length: {}",
+        transcript_id,
+        text.chars().count()
+    );
+    let pool = state.db_manager.pool();
+    match TranscriptsRepository::update_text(pool, &transcript_id, &text).await {
+        Ok(()) => {
+            log_info!("Successfully updated text of {}", transcript_id);
+            Ok(serde_json::json!({"message": "Transcript text saved successfully"}))
+        }
+        Err(e) => {
+            // The error Display never carries the text itself, so the log and
+            // the toast the frontend shows stay free of meeting content.
+            log_error!(
+                "Failed to set the text of transcript {}: {}",
+                transcript_id,
+                e
+            );
+            Err(e.to_string())
+        }
+    }
+}
+
 /// Every name of the global people directory: no query, no limit, and no
 /// guarantee of order (sorting lives in one place, on the frontend).
 #[tauri::command]

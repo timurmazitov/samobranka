@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { MeetingSpeaker, MeetingSummary, SummaryProcessResponse } from '@/types';
@@ -17,6 +17,8 @@ import { useSummaryGeneration } from '@/hooks/meeting-details/useSummaryGenerati
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
+import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useConfig } from '@/contexts/ConfigContext';
 
 export default function PageContent({
@@ -36,6 +38,7 @@ export default function PageContent({
   onLoadMore,
   meetingSpeakers,
   onSpeakerChanged,
+  onTextEdited,
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
@@ -54,6 +57,8 @@ export default function PageContent({
   // Speakers of this meeting, used by the per-row dropdown
   meetingSpeakers?: MeetingSpeaker[];
   onSpeakerChanged?: (transcriptId: string, label: string | null) => void | Promise<void>;
+  /** A row's saved text edit, applied to the pagination state by the page. */
+  onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
 }) {
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
@@ -64,6 +69,10 @@ export default function PageContent({
   // State
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const isRecording = false;
+  // The same shared pass store the speakers panel gates its buttons on: while
+  // a pass runs for this meeting, inline text editing closes too, so the two
+  // surfaces block and unblock together.
+  const isDiarizing = useDiarizationPassRunning(meeting?.id);
   const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
@@ -134,6 +143,18 @@ export default function PageContent({
     setAiSummary: meetingData.setAiSummary,
     onOpenModelSettings: handleOpenModelSettings,
   });
+
+  // A saved row edit makes an existing summary stale (summaries read the
+  // transcript text from the database), so offer the existing regenerate
+  // action through a single hint toast — never automatically.
+  const notifySummaryStale = useTranscriptEditSummaryHint({
+    hasCompletedSummary: summaryGeneration.summaryStatus === 'completed',
+    onRegenerate: summaryGeneration.handleRegenerateSummary,
+  });
+  const handleTranscriptTextEdited = useCallback(async (transcriptId: string, text: string) => {
+    await onTextEdited?.(transcriptId, text);
+    notifySummaryStale();
+  }, [onTextEdited, notifySummaryStale]);
 
   const copyOperations = useCopyOperations({
     meeting,
@@ -222,6 +243,8 @@ export default function PageContent({
               onRefetchTranscripts={onRefetchTranscripts}
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
+              onTextEdited={handleTranscriptTextEdited}
+              isDiarizing={isDiarizing}
             />
           }
           summary={

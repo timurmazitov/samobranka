@@ -996,6 +996,9 @@
     },
     "diarization": {
       "failed": "Не удалось выполнить диаризацию"
+    },
+    "transcriptEdit": {
+      "summaryOutdated": "Саммари больше не соответствует исправленному транскрипту."
     }
   },
   "speakers": {
@@ -1068,6 +1071,9 @@
     "speakerAttributedDiarization": "Спикер определён диаризацией ({{speaker}})",
     "speakerChipClickToChange": "{{title}} — нажмите, чтобы изменить",
     "updateSpeakerFailed": "Не удалось обновить спикера",
+    "editTextTooltip": "Редактировать текст",
+    "updateTextFailed": "Не удалось обновить текст",
+    "updateTextFailedDescription": "Изменения в этой строке не сохранены.",
     "homeCopyTitle": "Копировать транскрипцию",
     "homeExportTitle": "Экспортировать транскрипцию",
     "homeLanguageTitle": "Язык",
