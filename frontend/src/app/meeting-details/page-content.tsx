@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { MeetingSpeaker, MeetingSummary, SummaryProcessResponse } from '@/types';
@@ -17,6 +17,7 @@ import { useSummaryGeneration } from '@/hooks/meeting-details/useSummaryGenerati
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
+import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
 import { useConfig } from '@/contexts/ConfigContext';
 
 export default function PageContent({
@@ -138,6 +139,18 @@ export default function PageContent({
     onOpenModelSettings: handleOpenModelSettings,
   });
 
+  // A saved row edit makes an existing summary stale (summaries read the
+  // transcript text from the database), so offer the existing regenerate
+  // action through a single hint toast — never automatically.
+  const notifySummaryStale = useTranscriptEditSummaryHint({
+    hasCompletedSummary: summaryGeneration.summaryStatus === 'completed',
+    onRegenerate: summaryGeneration.handleRegenerateSummary,
+  });
+  const handleTranscriptTextEdited = useCallback(async (transcriptId: string, text: string) => {
+    await onTextEdited?.(transcriptId, text);
+    notifySummaryStale();
+  }, [onTextEdited, notifySummaryStale]);
+
   const copyOperations = useCopyOperations({
     meeting,
     transcripts: meetingData.transcripts,
@@ -225,7 +238,7 @@ export default function PageContent({
               onRefetchTranscripts={onRefetchTranscripts}
               meetingSpeakers={meetingSpeakers}
               onSpeakerChanged={onSpeakerChanged}
-              onTextEdited={onTextEdited}
+              onTextEdited={handleTranscriptTextEdited}
             />
           }
           summary={
