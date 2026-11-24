@@ -221,4 +221,43 @@ describe('regenerate-summary hint on the meeting page', () => {
     expect(String(thrown)).toContain('database is locked');
     expect(infoNotify).not.toHaveBeenCalled();
   });
+
+  // Ticket 03: replacements go through this same save callback, so the hint
+  // chain the row already uses must keep working after «Заменить» and
+  // «Заменить все». The panel is rendered for real here; the save path is
+  // what the page hands the find hook, so this drives the page's own wiring.
+  test('a find-panel replacement shows the same regenerate hint once', async () => {
+    summaryStatus = 'completed';
+    await show({
+      segments: [
+        { id: 't1', timestamp: 0, text: 'alpha first' },
+        { id: 't2', timestamp: 1, text: 'alpha second, alpha third' },
+      ],
+      // Stands in for the pagination hook's save: resolves like a stored edit.
+      onTextEdited: async (_id: string, _text: string) => {},
+    });
+
+    // Open the panel the way the header's search button does, type the query,
+    // then press «Replace all» as rendered by the real panel.
+    await act(async () => { panelProps.onOpenFind(); });
+    const search = renderer!.root.findAll(n => n.type === 'input' && n.props.placeholder === 'Search')[0];
+    await act(async () => { search.props.onChange({ target: { value: 'alpha' } }); });
+    const replaceAllButton = renderer!.root.findAll(
+      n => n.type === 'button' && String(n.props.children ?? '').includes('Replace all'),
+    )[0];
+    expect(replaceAllButton).toBeDefined();
+
+    await act(async () => { replaceAllButton.props.onClick(); });
+
+    // One hint for the whole bulk action: the save path notifies per saved
+    // segment, but the id-stable sonner toast replaces instead of stacking,
+    // so the user sees one current hint — the same guarantee consecutive row
+    // edits already have.
+    expect(infoNotify.mock.calls.length).toBeGreaterThan(0);
+    const ids = new Set(infoNotify.mock.calls.map(call => (call[1] as Record<string, unknown>).id));
+    expect(ids.size).toBe(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.action.label).toBe('Regenerate Summary');
+  });
 });

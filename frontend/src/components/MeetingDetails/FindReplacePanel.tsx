@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { ReplaceAllPartialFailureError } from '@/hooks/meeting-details/useFindReplace';
 import '@/i18n';
 
 interface FindReplacePanelProps {
@@ -13,6 +15,8 @@ interface FindReplacePanelProps {
     open: boolean;
     query: string;
     onQueryChange: (query: string) => void;
+    replaceText: string;
+    onReplaceTextChange: (value: string) => void;
     caseSensitive: boolean;
     onCaseSensitiveChange: (value: boolean) => void;
     wholeWord: boolean;
@@ -26,6 +30,12 @@ interface FindReplacePanelProps {
     onPrevious: () => void;
     onNext: () => void;
     onClose: () => void;
+    /** Replaces the active match (host save path) and advances. Async so the panel can guard the click. */
+    onReplaceActive: () => Promise<void>;
+    /** Replaces every match in one action; rejects when some segment saves failed. */
+    onReplaceAll: () => Promise<void>;
+    /** Matches «Заменить все» can replace; counted in its label. */
+    replaceableCount: number;
     /** Which field to focus on open: Ctrl+H lands the caret in «Заменить». */
     focusTarget: 'search' | 'replace';
     /** Changes on every open so the focus effect re-runs on reopen. */
@@ -38,14 +48,17 @@ interface FindReplacePanelProps {
  * The floating «Найти и заменить» card: fixed top-right with the sidebar
  * width compensation of the status overlays, deliberately not a Radix Dialog
  * so the text under it stays clickable and scrolls during navigation. The
- * «Заменить» field is present but inert in this ticket — replacement lands
- * with ticket 03, which can add its buttons and actions here without moving
- * anything. Enter / Shift+Enter walk the match list like ↑/↓ do.
+ * replacement actions delegate to the hook (which saves through the host's
+ * segment-edit path); this component only guards the click while a save
+ * round-trips and toasts a failure with the existing translated strings.
+ * Enter / Shift+Enter walk the match list like ↑/↓ do.
  */
 export function FindReplacePanel({
     open,
     query,
     onQueryChange,
+    replaceText,
+    onReplaceTextChange,
     caseSensitive,
     onCaseSensitiveChange,
     wholeWord,
@@ -56,6 +69,9 @@ export function FindReplacePanel({
     onPrevious,
     onNext,
     onClose,
+    onReplaceActive,
+    onReplaceAll,
+    replaceableCount,
     focusTarget,
     focusNonce,
     sidebarCollapsed,
@@ -63,6 +79,33 @@ export function FindReplacePanel({
     const { t } = useTranslation();
     const searchRef = useRef<HTMLInputElement>(null);
     const replaceRef = useRef<HTMLInputElement>(null);
+    // Local guard so a held button cannot queue a second write while the
+    // first save round-trips; the hook mirrors it, the panel just stays quiet.
+    const [busy, setBusy] = useState(false);
+
+    // Reuse the row editor's failure strings — a replace that cannot save is
+    // the same event to the user as a row edit that cannot save. No raw error
+    // ever reaches the toast.
+    const runReplace = async (action: () => Promise<void>, failedCount?: (error: unknown) => number | null) => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await action();
+        } catch (error) {
+            const failures = failedCount ? failedCount(error) : null;
+            if (failures !== null && failures > 0) {
+                toast.error(t('findReplace.replaceAllFailed'), {
+                    description: t('findReplace.replaceAllFailedDescription', { count: failures }),
+                });
+            } else {
+                toast.error(t('transcript.updateTextFailed'), {
+                    description: t('transcript.updateTextFailedDescription'),
+                });
+            }
+        } finally {
+            setBusy(false);
+        }
+    };
 
     // Focus follows the open request: Ctrl+F lands in «Искать», Ctrl+H in
     // «Заменить». The nonce makes a reopen re-run the effect even when the
@@ -127,8 +170,8 @@ export function FindReplacePanel({
                             />
                             <Input
                                 ref={replaceRef}
-                                // Inert until ticket 03 gives replacement a
-                                // command path; the field previews the UI.
+                                value={replaceText}
+                                onChange={(event) => onReplaceTextChange(event.target.value)}
                                 placeholder={t('findReplace.replacePlaceholder')}
                                 aria-label={t('findReplace.replacePlaceholder')}
                                 className="mt-2 h-8 text-sm"
@@ -169,6 +212,32 @@ export function FindReplacePanel({
                         >
                             {current} / {total}
                         </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => void runReplace(onReplaceActive)}
+                            disabled={busy || total === 0}
+                        >
+                            {t('findReplace.replace')}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => void runReplace(
+                                onReplaceAll,
+                                (error) => (error instanceof ReplaceAllPartialFailureError ? error.failedCount : null),
+                            )}
+                            disabled={busy || replaceableCount === 0}
+                        >
+                            {t('findReplace.replaceAll', { count: replaceableCount })}
+                        </Button>
                     </div>
 
                     <div className="mt-2 flex items-center gap-4">
