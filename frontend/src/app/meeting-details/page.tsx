@@ -117,6 +117,17 @@ function MeetingDetailsContent() {
     await loadMeetingSpeakers();
   }, [deleteTranscripts, loadMeetingSpeakers]);
 
+  // A bulk delete (ticket 02) is one batch command over the selected ids. It
+  // reloads the current page window (`refetchWindow`) so offset pagination
+  // never skips the rows that slid into the deleted ones' places, and reloads
+  // the speaker list for the same reason the single delete does — the
+  // reconcile already dropped dead bindings in the database. The error
+  // rethrows so page-content keeps the selection and the view toasts.
+  const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
+    await deleteTranscripts(transcriptIds, { refetchWindow: true });
+    await loadMeetingSpeakers();
+  }, [deleteTranscripts, loadMeetingSpeakers]);
+
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
     try {
       const models = await invoke('get_ollama_models', { endpoint: null }) as any[];
@@ -387,6 +398,7 @@ function MeetingDetailsContent() {
     onSpeakerChanged={handleSpeakerChanged}
     onTextEdited={handleTextEdited}
     onSegmentDeleted={handleSegmentDeleted}
+    onSegmentsBulkDeleted={handleSegmentsBulkDeleted}
     // Pagination props for efficient transcript loading
     segments={segments}
     hasMore={hasMore}

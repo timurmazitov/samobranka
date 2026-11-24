@@ -268,6 +268,75 @@ describe('regenerate-summary hint on the meeting page', () => {
     expect(panelProps.isRetranscribing).toBe(false);
   });
 
+  // Ticket 02: the page wires the selection mode through the panel: the
+  // toolbar toggle, the checkbox host, and the batch delete host chain. The
+  // mode is ephemeral component state, so it starts closed with nothing
+  // selected, and a working callback must always reach the view.
+  test('the panel receives the selection mode wiring, closed at first', async () => {
+    await show();
+    expect(panelProps.selectionMode).toBe(false);
+    expect(panelProps.selectedIds).toEqual([]);
+    expect(typeof panelProps.onToggleSelection).toBe('function');
+    expect(typeof panelProps.onToggleSelected).toBe('function');
+    expect(typeof panelProps.onSegmentsBulkDeleted).toBe('function');
+  });
+
+  test('the toggle opens the mode and checkboxes build the counter', async () => {
+    await show();
+
+    await act(async () => { panelProps.onToggleSelection(); });
+    expect(panelProps.selectionMode).toBe(true);
+
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    expect(panelProps.selectedIds).toEqual(['t1']);
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+    expect(panelProps.selectedIds).toEqual(['t1', 't2']);
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    expect(panelProps.selectedIds).toEqual(['t2']);
+  });
+
+  test('leaving the mode clears the selection', async () => {
+    await show();
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+
+    await act(async () => { panelProps.onToggleSelection(); });
+
+    expect(panelProps.selectionMode).toBe(false);
+    expect(panelProps.selectedIds).toEqual([]);
+  });
+
+  test('a successful batch hands the ids to the host and empties the selection', async () => {
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk.mock.calls).toEqual([[['t1', 't2']]]);
+    // The mode stays open for the next cleaning round; only the ids clear.
+    expect(panelProps.selectionMode).toBe(true);
+    expect(panelProps.selectedIds).toEqual([]);
+  });
+
+  test('a failed batch keeps the selection so the user can retry', async () => {
+    let thrown: unknown = null;
+    await show({ onSegmentsBulkDeleted: async () => { throw new Error('transcript not found: t2'); } });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => {
+      try { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); }
+      catch (error) { thrown = error; }
+    });
+
+    expect(String(thrown)).toContain('transcript not found');
+    expect(panelProps.selectedIds).toEqual(['t1', 't2']);
+  });
+
   // The delete button's data: the page hands the panel a working callback
   // built on the pagination hook's batch delete, so the live page never
   // shows a trash that deletes nothing.

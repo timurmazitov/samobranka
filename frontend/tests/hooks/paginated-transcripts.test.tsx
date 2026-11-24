@@ -344,6 +344,80 @@ describe('paginated transcript request ownership', () => {
     expect(state.transcripts.map(t => t.id)).toEqual(['t2', 't3', 't4']);
   });
 
+  // Ticket 02: the bulk toolbar refetches the current window after the
+  // batch lands, so the rows that slid into the freed places show up without
+  // waiting for a loadMore (offset pagination never skips a shifted row).
+
+  test('a bulk delete reloads the window so the shifted rows appear', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    // Two loaded of four; deleting both opens two places for the tail rows.
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 4, true));
+
+    await act(async () => {
+      void state.deleteTranscripts(['t1', 't2'], { refetchWindow: true });
+    });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    // The window reload asks from 0 (the loaded list always starts at the
+    // transcript's beginning) with at least a page — never a stale mid-list
+    // offset, which would silently skip the rows that slid back.
+    const windowReload = request('transcripts', 'A', 1);
+    expect(windowReload.args).toEqual({ meetingId: 'A', limit: 100, offset: 0 });
+    await resolve(windowReload, manyPage(['t3', 't4'], 2, false, 2));
+    expect(state.segments.map(s => s.id)).toEqual(['t3', 't4']);
+    expect(state.totalCount).toBe(2);
+    expect(state.hasMore).toBe(false);
+  });
+
+  test('a partial bulk delete reloads the whole window, not a truncated page', async () => {
+    // A multi-page-loaded window must be re-read whole: asking a default
+    // 100-row page at offset 0 and replacing would truncate it.
+    const loaded = Array.from({ length: 120 }, (_, i) => `t${i}`);
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(loaded, 130, true));
+
+    await act(async () => {
+      void state.deleteTranscripts(['t60'], { refetchWindow: true });
+    });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    const windowReload = request('transcripts', 'A', 1);
+    // 119 rows remained loaded, so the reload asks for 119 (>= the page size),
+    // not 100 — a 100-row replacement would drop the last 19 loaded rows.
+    expect(windowReload.args).toEqual({ meetingId: 'A', limit: 119, offset: 0 });
+  });
+
+  test('a failed bulk window reload keeps the honest optimistic counters', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 4, true));
+
+    await act(async () => {
+      void state.deleteTranscripts(['t1', 't2'], { refetchWindow: true });
+    });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    // The reload cannot reach the backend: the deleted rows must NOT return
+    // and the decremented counter must survive the failed read.
+    await act(async () => { request('transcripts', 'A', 1).reject(new Error('offline')); });
+    expect(state.segments.map(s => s.id)).toEqual([]);
+    expect(state.totalCount).toBe(2);
+  });
+
+  test('a single delete does not spend a window reload', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    await resolve(request('transcripts', 'A'), manyPage(['t1', 't2', 't3'], 3, false));
+
+    await act(async () => { void state.deleteTranscripts(['t2']); });
+    await resolve(deleteRequest('A'), { message: 'ok' });
+
+    // Hover trash stays the cheap optimistic path: only the initial page read.
+    expect(requests.filter(r => r.command === 'api_get_meeting_transcripts')).toHaveLength(1);
+  });
+
   test('a late delete response cannot touch a newly selected meeting', async () => {
     await show('A');
     await resolve(request('metadata', 'A'), metadata('A'));

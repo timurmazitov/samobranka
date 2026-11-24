@@ -19,6 +19,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscriptEditSummaryHint';
+import { useTranscriptSelection } from '@/hooks/meeting-details/useTranscriptSelection';
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
@@ -45,6 +46,7 @@ export default function PageContent({
   onSpeakerChanged,
   onTextEdited,
   onSegmentDeleted,
+  onSegmentsBulkDeleted,
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
@@ -69,6 +71,13 @@ export default function PageContent({
   onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
   /** A row's segment delete, applied optimistically by the pagination hook. */
   onSegmentDeleted?: (transcriptId: string) => void | Promise<void>;
+  /**
+   * Bulk delete of the selected segments (ticket 02): the page's owner wires
+   * this to the pagination hook's batch delete (with the current-window
+   * refetch) plus the speaker reload. The view owns the confirmation and the
+   * failure toast; the error rethrows so neither claims success.
+   */
+  onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
 }) {
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
@@ -179,6 +188,22 @@ export default function PageContent({
     await onSegmentDeleted?.(transcriptId);
     notifySummaryStale();
   }, [onSegmentDeleted, notifySummaryStale]);
+
+  // Bulk selection mode (ticket 02). The page owns the ephemeral id set —
+  // like it owns the find panel's state — because the view is shared with
+  // the live recording page. Ticket 04 wires both exclusivity directions
+  // through these callbacks: `exitSelection` when Find opens (including the
+  // Ctrl+F/H hotkey path) and when the pencil opens an editor.
+  const selection = useTranscriptSelection(meeting?.id);
+  const { setSelectedIds: setSelectedSegments } = selection;
+  // After a successful batch the deleted ids are gone, so the selection
+  // empties while the mode stays open for further cleaning; a rejection
+  // keeps the selection intact so the user can retry after the rollback.
+  // The stale-summary hint for bulk delete is ticket 05's call to add here.
+  const handleSegmentsBulkDeleted = useCallback(async (transcriptIds: string[]) => {
+    await onSegmentsBulkDeleted?.(transcriptIds);
+    setSelectedSegments([]);
+  }, [onSegmentsBulkDeleted, setSelectedSegments]);
 
   const copyOperations = useCopyOperations({
     meeting,
@@ -354,6 +379,11 @@ export default function PageContent({
               onSegmentDeleted={handleSegmentDeleted}
               isDiarizing={isDiarizing}
               isRetranscribing={isRetranscribing}
+              selectionMode={selection.isSelecting}
+              onToggleSelection={selection.toggleSelection}
+              selectedIds={selection.selectedIds}
+              onToggleSelected={selection.toggleSelected}
+              onSegmentsBulkDeleted={handleSegmentsBulkDeleted}
               onOpenFind={() => openPanel({ focus: 'search' })}
               findOpen={findReplace.open}
               findMatches={findReplace.matches}

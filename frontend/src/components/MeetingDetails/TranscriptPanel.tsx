@@ -46,6 +46,14 @@ interface TranscriptPanelProps {
   /** Whether a retranscription runs for this meeting; closes segment deletion. */
   isRetranscribing?: boolean;
 
+  // Bulk selection mode (ticket 02, meeting page only). The page owns the id
+  // set; the panel only threads the toolbar toggle and the row checkboxes.
+  selectionMode?: boolean;
+  onToggleSelection?: () => void;
+  selectedIds?: string[];
+  onToggleSelected?: (transcriptId: string) => void;
+  onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
+
   // Find & replace (meeting page only): opens the floating panel and drives
   // the row highlights through the virtualized view.
   onOpenFind?: () => void;
@@ -79,6 +87,11 @@ export function TranscriptPanel({
   onSegmentDeleted,
   isDiarizing,
   isRetranscribing,
+  selectionMode,
+  onToggleSelection,
+  selectedIds,
+  onToggleSelected,
+  onSegmentsBulkDeleted,
   onOpenFind,
   findOpen,
   findMatches,
@@ -115,6 +128,11 @@ export function TranscriptPanel({
           meetingFolderPath={meetingFolderPath}
           onRefetchTranscripts={onRefetchTranscripts}
           onOpenFind={onOpenFind}
+          onToggleSelection={onToggleSelection}
+          selectionMode={selectionMode}
+          isRecording={isRecording}
+          isDiarizing={isDiarizing}
+          isRetranscribing={isRetranscribing}
         />
       </div>
 
@@ -140,6 +158,10 @@ export function TranscriptPanel({
           onSegmentDeleted={onSegmentDeleted}
           isDiarizing={isDiarizing}
           isRetranscribing={isRetranscribing}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelected={onToggleSelected}
+          onSegmentsBulkDeleted={onSegmentsBulkDeleted}
           findOpen={findOpen}
           findMatches={findMatches}
           findActiveIndex={findActiveIndex}
