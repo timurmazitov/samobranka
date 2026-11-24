@@ -55,6 +55,11 @@ interface TranscriptPanelProps {
   onSegmentsBulkDeleted?: (transcriptIds: string[]) => void | Promise<void>;
   /** Leave the selection mode and clear the ids (ticket 04, pencil click). */
   onExitSelection?: () => void;
+  // Ticket 03's assistants + keyboard seam, threaded to the view's bar.
+  onSelectAllVisible?: () => void;
+  onSelectBySpeaker?: (label: string) => void;
+  onRowRangeSelect?: (transcriptId: string, modifiers: { shift: boolean }) => void;
+  bulkDeleteNonce?: number;
 
   // Find & replace (meeting page only): opens the floating panel and drives
   // the row highlights through the virtualized view.
@@ -95,6 +100,10 @@ export function TranscriptPanel({
   onToggleSelected,
   onSegmentsBulkDeleted,
   onExitSelection,
+  onSelectAllVisible,
+  onSelectBySpeaker,
+  onRowRangeSelect,
+  bulkDeleteNonce,
   onOpenFind,
   findOpen,
   findMatches,
@@ -165,6 +174,11 @@ export function TranscriptPanel({
           selectedIds={selectedIds}
           onToggleSelected={onToggleSelected}
           onSegmentsBulkDeleted={onSegmentsBulkDeleted}
+          onExitSelection={onExitSelection}
+          onSelectAllVisible={onSelectAllVisible}
+          onSelectBySpeaker={onSelectBySpeaker}
+          onRowRangeSelect={onRowRangeSelect}
+          bulkDeleteNonce={bulkDeleteNonce}
           findOpen={findOpen}
           findMatches={findMatches}
           findActiveIndex={findActiveIndex}
