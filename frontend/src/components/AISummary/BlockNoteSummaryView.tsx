@@ -17,6 +17,11 @@ import {
   type SummaryBlock,
 } from '@/hooks/meeting-details/useFindReplace';
 import {
+  applyLegacySummaryReplacements,
+  applySummaryReplacements,
+  type SummaryReplaceEdit,
+} from '@/lib/summary-find-replace';
+import {
   applyFindHighlights,
   type SummaryFindMatch,
 } from '@/lib/summary-find-reveal';
@@ -58,6 +63,14 @@ export interface BlockNoteSummaryViewRef {
   saveSummary: () => Promise<void>;
   getMarkdown: () => Promise<string>;
   isDirty: boolean;
+  /**
+   * Apply the find panel's summary replacements (ticket 05) to the live
+   * content. Returns false — touching nothing — when a range no longer holds
+   * the `expected` text (the user edited under the panel), exactly the state
+   * a rolled-back transcript save produces. The change rides the editor's own
+   * dirty mechanism, so the existing save persists it.
+   */
+  replaceSummary: (edits: SummaryReplaceEdit[]) => boolean;
 }
 
 // Format detection helper
@@ -270,6 +283,37 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     }
   }, [isDirty, onDirtyChange]);
 
+  // The find panel's summary replacement (ticket 05), exposed through the
+  // ref. BlockNote and markdown edit the live PM doc in one transaction —
+  // `editor.transact` fires the editor's onChange, which flows into
+  // handleEditorChange and raises the existing dirty flag, so the ordinary
+  // save persists the change; nothing here saves anything itself. The user's
+  // unsaved edits are never reverted: the edits only touch their own ranges,
+  // and a range whose text no longer matches `expected` aborts the whole
+  // batch (return false, doc untouched) — the panel recomputes from the
+  // real text, the same contract a rolled-back transcript save gives.
+  // Legacy has no editor: the pure splice over the `block.content` strings
+  // (same verification and atomicity) goes through the existing
+  // `onSummaryChange` chain, the block-edit path's own mechanism. No dirty
+  // flag is raised there on purpose — the legacy editor has never set it,
+  // and saveAllChanges persists legacy content through the aiSummary branch;
+  // raising the BlockNote dirty flag would misroute the save to the (empty)
+  // BlockNote blocks.
+  const replaceSummary = useCallback((edits: SummaryReplaceEdit[]): boolean => {
+    if (edits.length === 0) return true;
+
+    if (format === 'legacy') {
+      const updated = applyLegacySummaryReplacements(summaryData as Summary | null, edits);
+      if (updated === null) return false;
+      onSummaryChange?.(updated);
+      return true;
+    }
+
+    const target = format === 'markdown' ? editor : liveEditorRef.current;
+    if (!target) return false;
+    return applySummaryReplacements(target, edits);
+  }, [format, summaryData, onSummaryChange, editor]);
+
   const handleSave = useCallback(async () => {
     if (!onSave || !isDirty) return;
 
@@ -304,6 +348,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     saveSummary: handleSave,
+    replaceSummary,
     getMarkdown: async () => {
       try {
         console.log('🔍 getMarkdown called, format:', format);
@@ -352,7 +397,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
       }
     },
     isDirty
-  }), [handleSave, isDirty, editor, format, currentBlocks, data]);
+  }), [handleSave, replaceSummary, isDirty, editor, format, currentBlocks, data]);
 
   // Render legacy format
   if (format === 'legacy') {

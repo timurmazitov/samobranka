@@ -177,6 +177,57 @@ describe('FindHighlightExtension', () => {
     expect(extension.plugins).toHaveLength(1);
     expect(extension.plugins[0]).toBeInstanceOf(Plugin);
   });
+
+  test('carries the static key BlockNote requires to register the extension', () => {
+    // BaseBlockNoteExtension.key() throws unless a subclass implements it —
+    // without it, editor creation with `extensions: [extension]` crashes at
+    // startup. Editor creation with this extension is the real consumer.
+    expect(typeof FindHighlightExtension.key()).toBe('string');
+    expect(FindHighlightExtension.key()).not.toBe('');
+  });
+
+  test('an editor created with the extension registers the plugin — the production path', async () => {
+    // The exact useCreateBlockNote path the summary surfaces take
+    // (`useCreateBlockNote({ extensions: [new FindHighlightExtension()] })`):
+    // BlockNote looks the extension up by its constructor key during
+    // creation, so a missing key() crashed the summary editor at startup.
+    const { BlockNoteEditor } = await import('@blocknote/core');
+    // Editor creation touches the DOM (tiptap injects its style tag and
+    // schedules focus); the file-level stub above was already restored, so
+    // re-arm a minimal document/window pair for the creation.
+    const originalDocument = Reflect.getOwnPropertyDescriptor(globalThis, 'document');
+    const originalWindow = Reflect.getOwnPropertyDescriptor(globalThis, 'window');
+    const documentStub: any = {
+      documentElement: { style: {} },
+      head: { appendChild: () => {} },
+      getElementsByTagName: (name: string) => (name === 'head' ? [{ appendChild: () => {} }] : []),
+      querySelector: () => null,
+      createElement: () => ({ style: {}, appendChild: () => {}, setAttribute: () => {}, classList: { add: () => {} } }),
+    };
+    documentStub.defaultView = {
+      setTimeout: (fn: () => void) => {
+        fn();
+        return 0;
+      },
+      clearTimeout: () => {},
+      document: documentStub,
+      navigator: { userAgent: 'test' },
+    };
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: documentStub });
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: documentStub.defaultView });
+    try {
+      const editor = BlockNoteEditor.create({ extensions: [new FindHighlightExtension()] });
+      // The extension landed in the editor's registry under its key, with
+      // the highlight plugin attached.
+      expect((editor as any).extensions.findHighlight).toBeDefined();
+      expect((editor as any).extensions.findHighlight.plugins).toHaveLength(1);
+    } finally {
+      if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+      else Reflect.deleteProperty(globalThis, 'document');
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
 });
 
 
