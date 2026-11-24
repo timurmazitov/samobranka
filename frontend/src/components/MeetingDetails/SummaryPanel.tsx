@@ -316,13 +316,12 @@ export function SummaryPanel({
               <Button
                 size="sm"
                 variant="outline"
-                className="px-2 @[22rem]:px-3"
+                className="px-2"
                 onClick={onOpenFind}
                 title={t('findReplace.openSummaryTooltip')}
                 aria-label={t('findReplace.openSummaryTooltip')}
               >
                 <Search size={18} />
-                <span className="hidden @[22rem]:inline">{t('findReplace.button')}</span>
               </Button>
             </div>
           )}

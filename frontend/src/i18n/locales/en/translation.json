@@ -1058,7 +1058,6 @@
   "findReplace": {
     "title": "Find and replace",
     "openTooltip": "Find and replace in transcript",
-    "button": "Find",
     "searchPlaceholder": "Search",
     "replacePlaceholder": "Replace",
     "replace": "Replace",
