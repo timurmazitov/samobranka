@@ -6,13 +6,9 @@ import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptVie
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
 import type { Match } from '@/hooks/meeting-details/useFindReplace';
 import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
-import '@/i18n';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
-  customPrompt: string;
-  onPromptChange: (value: string) => void;
   onCopyTranscript: () => void;
   onExportTranscript: () => void;
   onOpenMeetingFolder: () => Promise<void>;
@@ -71,8 +67,6 @@ interface TranscriptPanelProps {
 
 export function TranscriptPanel({
   transcripts,
-  customPrompt,
-  onPromptChange,
   onCopyTranscript,
   onExportTranscript,
   onOpenMeetingFolder,
@@ -109,7 +103,6 @@ export function TranscriptPanel({
   findMatches,
   findActiveIndex,
 }: TranscriptPanelProps) {
-  const { t } = useTranslation();
   // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) {
@@ -184,18 +177,6 @@ export function TranscriptPanel({
           findActiveIndex={findActiveIndex}
         />
       </div>
-
-      {/* Custom prompt input at bottom of transcript section */}
-      {!isRecording && convertedSegments.length > 0 && (
-        <div className="p-1 border-t border-gray-200">
-          <textarea
-            placeholder={t('summary.promptPlaceholder')}
-            className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm min-h-[80px] resize-y"
-            value={customPrompt}
-            onChange={(e) => onPromptChange(e.target.value)}
-          />
-        </div>
-      )}
     </div>
   );
 }

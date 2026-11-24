@@ -107,6 +107,7 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
     onGenerateSummary: async () => {},
     onStopGeneration: () => {},
     customPrompt: '',
+    onPromptChange: () => {},
     onSaveSummary: async () => {},
     onSummaryChange: () => {},
     onDirtyChange: () => {},
