@@ -169,3 +169,22 @@ export function formatTranscriptText(
 
   return (options.header ?? '') + lines.join('\n');
 }
+
+/**
+ * The single-line form of an edited transcript text: every whitespace run
+ * (newlines and tabs from pastes included) collapses to one space and the
+ * ends trim. This mirrors the Rust `normalize_transcript_text` in the
+ * transcript repository — the repository stays authoritative, and both the
+ * row and the pagination hook normalize through this one function so the
+ * optimistic value equals what the database will store. The shared fixture
+ * `src-tauri/tests/fixtures/transcript-normalize.json` pins both sides.
+ * Whitespace means Unicode White_Space (Rust `char::is_whitespace`), NOT
+ * JS `/\s/`: that would split U+FEFF (kept by Rust) and keep U+0085 (split
+ * by Rust).
+ */
+export function normalizeTranscriptText(text: string): string {
+  return text
+    .split(/[\p{White_Space}]+/u)
+    .filter(part => part.length > 0)
+    .join(' ');
+}

@@ -249,11 +249,10 @@ describe('inline transcript text editing', () => {
     await type(view, '  Fixed   words\nwith newline  ');
     await press(view, 'Enter');
 
-    expect(invoke.mock.calls).toContainEqual([
-      'api_update_transcript_text',
-      { transcriptId: 't1', text: 'Fixed words with newline' },
-    ]);
-    expect(edited.mock.calls).toContainEqual(['t1', 'Fixed words with newline']);
+    // The row hands the normalized text to the host save path (the page's
+    // hook owns the invoke and the optimistic update).
+    expect(edited.mock.calls).toEqual([['t1', 'Fixed words with newline']]);
+    expect(invoke).not.toHaveBeenCalled();
     expect(textarea(view)).toBeUndefined();
   });
 
@@ -268,11 +267,8 @@ describe('inline transcript text editing', () => {
     await type(view, 'Blur saved');
     await blur(view);
 
-    expect(invoke.mock.calls).toContainEqual([
-      'api_update_transcript_text',
-      { transcriptId: 't1', text: 'Blur saved' },
-    ]);
-    expect(edited.mock.calls).toContainEqual(['t1', 'Blur saved']);
+    expect(edited.mock.calls).toEqual([['t1', 'Blur saved']]);
+    expect(invoke).not.toHaveBeenCalled();
     expect(textarea(view)).toBeUndefined();
   });
 
@@ -324,10 +320,9 @@ describe('inline transcript text editing', () => {
   });
 
   test('a failed save keeps the row text and toasts an error', async () => {
-    saveText = async () => {
+    const edited = mock(async (_id: string, _text: string) => {
       throw new Error('database is locked');
-    };
-    const edited = mock(async (_id: string, _text: string) => {});
+    });
     const view = await render(
       [{ id: 't1', timestamp: 0, text: 'Original text' }],
       { onTextEdited: edited },
@@ -337,19 +332,56 @@ describe('inline transcript text editing', () => {
     await type(view, 'Never stored');
     await press(view, 'Enter');
 
-    expect(edited).not.toHaveBeenCalled();
+    // The host save path (hook) owns the rollback; the row never edits its own
+    // text optimistically, so the stored text prop is what renders.
+    expect(edited).toHaveBeenCalledWith('t1', 'Never stored');
     expect(errorNotify).toHaveBeenCalled();
     expect(errorNotify.mock.calls[0][0]).toBe('Failed to update text');
     expect(text(view)).toContain('Original text');
   });
 
-  test('a whitespace-only draft is rejected by the backend and toasts an error', async () => {
-    // The repository is authoritative on "never empty" (it rejects the save),
-    // and the row surfaces that rejection like any other failed save.
-    saveText = async () => {
-      throw new Error('transcript text cannot be empty');
+  test('the failed-save toast shows a generic description, never the raw error', async () => {
+    // The raw failure (possibly a driver-level message) goes to the console
+    // for diagnostics; the toast only ever shows the translated text.
+    const edited = async (_id: string, _text: string) => {
+      throw new Error(
+        'error returned from database: (code: 19) UNIQUE constraint failed: transcripts.id',
+      );
     };
-    const edited = mock(async (_id: string, _text: string) => {});
+    const consoleErrors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => { consoleErrors.push(args); };
+    try {
+      const view = await render(
+        [{ id: 't1', timestamp: 0, text: 'Original text' }],
+        { onTextEdited: edited },
+      );
+
+      await openEditor(view);
+      await type(view, 'Never stored');
+      await press(view, 'Enter');
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(errorNotify).toHaveBeenCalled();
+    const [title, options] = errorNotify.mock.calls[0] as [string, Record<string, unknown>];
+    expect(title).toBe('Failed to update text');
+    expect(options.description).toBe('The changes to this line were not saved.');
+    const toastText = JSON.stringify(errorNotify.mock.calls[0]);
+    expect(toastText).not.toContain('UNIQUE constraint');
+    expect(toastText).not.toContain('database');
+    // Diagnostics keep the raw error for the logs.
+    expect(consoleErrors.some(entry => String(entry).includes('UNIQUE constraint'))).toBe(true);
+  });
+
+  test('a whitespace-only draft reaches the host save path and toasts an error', async () => {
+    // The repository is authoritative on "never empty" (it rejects the save);
+    // the row passes the empty text on and surfaces the rejection like any
+    // other failed save.
+    const edited = mock(async (_id: string, _text: string) => {
+      throw new Error('transcript text cannot be empty');
+    });
     const view = await render(
       [{ id: 't1', timestamp: 0, text: 'Keep me' }],
       { onTextEdited: edited },
@@ -359,25 +391,21 @@ describe('inline transcript text editing', () => {
     await type(view, '   \n  ');
     await press(view, 'Enter');
 
-    // The save attempt goes to the backend, which is the authority that
+    // The save attempt goes to the host save path, which is the authority that
     // rejects it; the row never silently swallows the empty edit.
-    expect(invoke.mock.calls).toContainEqual([
-      'api_update_transcript_text',
-      { transcriptId: 't1', text: '' },
-    ]);
-    expect(edited).not.toHaveBeenCalled();
+    expect(edited.mock.calls).toEqual([['t1', '']]);
     expect(errorNotify).toHaveBeenCalled();
     expect(errorNotify.mock.calls[0][0]).toBe('Failed to update text');
     expect(text(view)).toContain('Keep me');
   });
 
   test('the error toast names the failure without repeating meeting content', async () => {
-    saveText = async () => {
+    const edited = async (_id: string, _text: string) => {
       throw new Error('transcript not found: transcript-42');
     };
     const view = await render(
       [{ id: 't1', timestamp: 0, text: 'Secret meeting words' }],
-      { onTextEdited: async () => {} },
+      { onTextEdited: edited },
     );
 
     await openEditor(view);
@@ -387,12 +415,15 @@ describe('inline transcript text editing', () => {
     expect(errorNotify).toHaveBeenCalled();
     const [title, options] = errorNotify.mock.calls[0];
     // The title is the translated, generic label and the description is the
-    // backend's own message — neither carries the old text or the discarded
-    // draft (the command's errors only ever mention the row id).
+    // translated fallback text — the backend's raw message (and any private
+    // meeting content or driver detail inside it) reaches the logs, not the
+    // user.
     expect(title).toBe('Failed to update text');
+    expect(options).toMatchObject({ description: 'The changes to this line were not saved.' });
     const toastText = JSON.stringify([title, options]);
     expect(toastText).not.toContain('Secret meeting words');
     expect(toastText).not.toContain('Confidential private correction');
+    expect(toastText).not.toContain('transcript-42');
   });
 
   test('blur after Escape never revives the discarded draft', async () => {
@@ -436,10 +467,9 @@ describe('inline transcript text editing', () => {
       isDiarizing: true,
     });
 
-    expect(invoke.mock.calls).toEqual([
-      ['api_update_transcript_text', { transcriptId: 't1', text: 'Draft before the run' }],
-    ]);
+    // The draft goes through the same host save path as Enter — once.
     expect(edited.mock.calls).toEqual([['t1', 'Draft before the run']]);
+    expect(invoke).not.toHaveBeenCalled();
     expect(textarea(view)).toBeUndefined();
   });
 

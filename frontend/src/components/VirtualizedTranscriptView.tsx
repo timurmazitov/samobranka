@@ -27,6 +27,7 @@ import {
     orderMeetingSpeakersForChip,
 } from "@/lib/transcript-format";
 import '@/i18n';
+import { normalizeTranscriptText } from '@/lib/transcript-format';
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -62,8 +63,10 @@ export interface VirtualizedTranscriptViewProps {
     /** Called after a row's speaker was changed and refetched from the backend. */
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
     /**
-     * Called after a row's text was saved; the meeting page applies it to the
-     * pagination state. The live panel passes nothing, so rows stay inert.
+     * Called to save a row's edited text; the meeting page routes it to the
+     * pagination hook, which updates the row optimistically and rolls it back
+     * on failure, rethrowing so the row can toast. The live panel passes
+     * nothing, so rows stay inert.
      */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /**
@@ -72,14 +75,6 @@ export interface VirtualizedTranscriptViewProps {
      * an edit cannot race the pass's row reload.
      */
     isDiarizing?: boolean;
-}
-
-// Mirrors the Rust `normalize_transcript_text`: whitespace runs (newlines and
-// tabs from pastes included) collapse to single spaces and the ends trim.
-// The repository stays authoritative; normalizing here too keeps the
-// optimistic value identical to what the database will store.
-function normalizeTranscriptText(text: string): string {
-    return text.split(/\s+/).filter(Boolean).join(' ');
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -133,23 +128,15 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
     /** False while recording and when the host does not support row edits. */
     allowSpeakerEdit: boolean;
-    /** Called after the row's text was saved; absent on the live panel. */
+    /** Called to save the row's edited text (host owns optimistic state and rollback); absent on the live panel. */
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /** False while recording; text edits exist only on the meeting page. */
     allowTextEdit: boolean;
 }) {
     const { t } = useTranslation();
 
-    // Optimistic text state, mirroring the speaker override below: the saved
-    // value shows as soon as the backend accepted it, cleared when the page's
-    // state delivers the new text (or on failure).
-    const [textOverride, setTextOverride] = useState<string | null>(null);
-    useEffect(() => {
-        setTextOverride(null);
-    }, [text]);
-    const effectiveText = textOverride ?? text;
     const displayText =
-        cleanStopWords(effectiveText) || (effectiveText.trim() === '' ? t('transcript.silence') : effectiveText);
+        cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text);
 
     // The inline editor: a single-line auto-resizing textarea in place of the
     // text, following EditableTitle. It opens only from the hover pencil and
@@ -184,18 +171,23 @@ const TranscriptSegment = memo(function TranscriptSegment({
         setIsEditing(false);
         const normalized = normalizeTranscriptText(draft);
         // An unchanged line stores nothing: a no-op Enter must not bump the
-        // meeting. An empty draft does reach the backend, which is the
-        // authority that rejects it, so the user gets the error toast.
+        // meeting. An empty draft does reach the host save path, where the
+        // backend rejects it as the authority, so the user gets the error toast.
         if (normalized && normalized === text) return;
 
-        // Never optimistically blank the row while the backend decides.
-        if (normalized) setTextOverride(normalized);
+        // The host save path (page → pagination hook) owns the optimistic
+        // update, the persistence and the rollback. A rejected save rethrows
+        // here, and only this row toasts.
         try {
-            await invoke('api_update_transcript_text', { transcriptId: id, text: normalized });
             await onTextEdited(id, normalized);
         } catch (error) {
-            setTextOverride(null);
-            toast.error(t('transcript.updateTextFailed'), { description: String(error) });
+            // The raw failure (possibly a driver-level message) belongs in the
+            // logs only: the toast carries just the translated strings, so no
+            // private meeting content or database detail can reach the user.
+            console.error('Failed to save transcript text:', error);
+            toast.error(t('transcript.updateTextFailed'), {
+                description: t('transcript.updateTextFailedDescription'),
+            });
         }
     };
 
@@ -357,7 +349,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         />
                     ) : (
                         <div className="group flex items-start gap-1">
-                            <p className="flex-1 text-base text-gray-800 leading-relaxed whitespace-pre-wrap">{displayText}</p>
+                            <p className="flex-1 text-base text-gray-800 leading-relaxed">{displayText}</p>
                             {canEditText && (
                                 <button
                                     type="button"

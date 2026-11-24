@@ -93,11 +93,14 @@ function MeetingDetailsContent() {
     await loadMeetingSpeakers();
   }, [meetingSpeakers, setTranscriptSpeaker, loadMeetingSpeakers]);
 
-  // A text edit changes only that row's text: the saved value is applied in
-  // place, no refetch. The callback must stay referentially stable so the
-  // memoized rows do not re-render on every keystroke elsewhere.
+  // A text edit changes only that row's text: the pagination hook saves it
+  // optimistically and rolls it back on failure, so this callback just awaits
+  // that save — a rejection must propagate to the row (its toast) and must
+  // not reach the stale-summary hint in page-content. The callback must stay
+  // referentially stable so the memoized rows do not re-render on every
+  // keystroke elsewhere.
   const handleTextEdited = useCallback(async (transcriptId: string, text: string) => {
-    setTranscriptText(transcriptId, text);
+    await setTranscriptText(transcriptId, text);
   }, [setTranscriptText]);
 
   const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
