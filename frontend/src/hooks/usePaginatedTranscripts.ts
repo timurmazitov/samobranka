@@ -24,6 +24,13 @@ interface UsePaginatedTranscriptsReturn {
 
     // Actions
     loadMore: () => Promise<void>;
+    /**
+     * Load every remaining transcript page (a one-shot drain, not a second
+     * state owner): each page goes through the same append/dedupe/offset path
+     * as `loadMore`, so the meeting's whole transcript ends up in this hook's
+     * state. The find panel opens it once so matches cover all segments.
+     */
+    loadAllPages: () => Promise<void>;
     reset: () => void;
     refetch: () => Promise<void>;
     /** Reload the meeting row (title/date) without touching the loaded transcript page. */
@@ -70,6 +77,8 @@ export function usePaginatedTranscripts({
     const requestIdRef = useRef(0);
     const isLoadingRef = useRef(false);
     const lastLoadTimeRef = useRef(0); // Debounce protection
+    // Mirror of `hasMore` the drain loop can read without a stale closure.
+    const hasMoreRef = useRef(false);
 
     const isCurrentRequest = useCallback((requestId: number) =>
         requestIdRef.current === requestId && activeMeetingIdRef.current === meetingId,
@@ -87,6 +96,7 @@ export function usePaginatedTranscripts({
         setIsLoading(true);
         setIsLoadingMore(false);
         setHasMore(false);
+        hasMoreRef.current = false;
         setError(null);
         offsetRef.current = 0;
     }, []);
@@ -147,6 +157,7 @@ export function usePaginatedTranscripts({
             }
 
             setHasMore(response.has_more);
+            hasMoreRef.current = response.has_more;
             setTotalCount(response.total_count);
             offsetRef.current = offset + newTranscripts.length;
 
@@ -183,6 +194,22 @@ export function usePaginatedTranscripts({
             }
         }
     }, [hasMore, meetingId, loadTranscriptsAtOffset, isLoading, isCurrentRequest]);
+
+    // Drain every remaining page through the same append path `loadMore`
+    // uses, so the pagination state stays the single owner of the loaded
+    // transcripts. The 100ms debounce does not apply: this is a deliberate
+    // one-shot, and a stuck offset (a page that returns nothing new) stops
+    // the loop so a backend misreport cannot spin.
+    const loadAllPages = useCallback(async () => {
+        const requestId = requestIdRef.current;
+        if (!isCurrentRequest(requestId) || !meetingId) return;
+
+        while (isCurrentRequest(requestId) && hasMoreRef.current) {
+            const offset = offsetRef.current;
+            await loadTranscriptsAtOffset(requestId, offset, true);
+            if (offsetRef.current === offset) break;
+        }
+    }, [meetingId, loadTranscriptsAtOffset, isCurrentRequest]);
 
     // Force refetch of data (e.g., after retranscription)
     const refetch = useCallback(async () => {
@@ -288,6 +315,7 @@ export function usePaginatedTranscripts({
         loadedCount: transcripts.length,
         error,
         loadMore,
+        loadAllPages,
         reset,
         refetch,
         refetchMetadata,

@@ -1055,6 +1055,17 @@
     "homeExport": "Export",
     "homeLanguage": "Language"
   },
+  "findReplace": {
+    "title": "Find and replace",
+    "openTooltip": "Find and replace in transcript",
+    "button": "Find",
+    "searchPlaceholder": "Search",
+    "replacePlaceholder": "Replace",
+    "previousMatch": "Previous match",
+    "nextMatch": "Next match",
+    "caseSensitive": "Match case",
+    "wholeWord": "Whole words"
+  },
   "summary": {
     "stopTooltip": "Stop summary generation",
     "stop": "Stop",

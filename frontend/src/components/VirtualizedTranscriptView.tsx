@@ -28,6 +28,15 @@ import {
 } from "@/lib/transcript-format";
 import '@/i18n';
 import { normalizeTranscriptText } from '@/lib/transcript-format';
+import type { Match } from '@/hooks/meeting-details/useFindReplace';
+
+/** Presentational slice of a find match for one row, memo-stable per list. */
+interface HighlightRange {
+    from: number;
+    to: number;
+    /** The match the panel navigates to: drawn apart from the rest. */
+    active: boolean;
+}
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -75,6 +84,15 @@ export interface VirtualizedTranscriptViewProps {
      * an edit cannot race the pass's row reload.
      */
     isDiarizing?: boolean;
+
+    // Find & replace (meeting page). `findOpen` is the mode switch: while it
+    // is true rows show their raw text and get <mark>s from `findMatches`.
+    // Both render branches share the row component, so highlighting lives
+    // there — an empty list is «panel open, this row has no hits».
+    findOpen?: boolean;
+    findMatches?: Match[];
+    /** Index into `findMatches` the panel points at; drawn apart from the rest. */
+    findActiveIndex?: number;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -100,6 +118,38 @@ function cleanStopWords(text: string): string {
     return cleanedText.replace(/\s+/g, ' ').trim();
 }
 
+// A row's find-panel ranges rendered as <mark>s. The active match — the one
+// the panel's counter points at — is drawn distinctly so the user can see
+// where they are in the list.
+function renderHighlightedText(text: string, highlights: HighlightRange[]) {
+    const nodes: React.ReactNode[] = [];
+    let cursor = 0;
+    highlights.forEach((range, index) => {
+        if (range.from > cursor) {
+            nodes.push(text.slice(cursor, range.from));
+        }
+        nodes.push(
+            <mark
+                key={`${range.from}-${range.to}-${index}`}
+                className={range.active
+                    ? 'bg-yellow-300 text-gray-900 rounded-sm'
+                    : 'bg-yellow-100 text-gray-900 rounded-sm'}
+            >
+                {text.slice(range.from, range.to)}
+            </mark>,
+        );
+        cursor = range.to;
+    });
+    if (cursor < text.length) {
+        nodes.push(text.slice(cursor));
+    }
+    return nodes;
+}
+
+// A stable empty list so rows without matches keep their memo identity while
+// the find panel is open (defined-but-empty highlights mean «raw display»).
+const NO_HIGHLIGHTS: HighlightRange[] = [];
+
 // Memoized transcript segment component
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
@@ -115,6 +165,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     allowSpeakerEdit,
     onTextEdited,
     allowTextEdit,
+    highlights,
 }: {
     id: string;
     timestamp: number;
@@ -132,11 +183,26 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
     /** False while recording; text edits exist only on the meeting page. */
     allowTextEdit: boolean;
+    /**
+     * Find-panel ranges for this row. `undefined` means the panel is closed:
+     * the normal filler-cleaned display. An array (possibly empty) means the
+     * panel is open: the row shows its RAW text so the ranges are honest,
+     * with `<mark>`s over them. Identity-stable per match list so memoized
+     * rows only re-render when their own highlights change.
+     */
+    highlights?: HighlightRange[];
 }) {
     const { t } = useTranslation();
 
-    const displayText =
-        cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text);
+    // While the find panel is open the row shows its raw text: the panel
+    // matches on the stored text, so cleaning filler words here would shift
+    // everything after the first filler and the highlight ranges would point
+    // at the wrong characters. Closing the panel clears `highlights` and the
+    // cleaned display comes back.
+    const panelOpen = highlights !== undefined;
+    const displayText = panelOpen
+        ? (text.trim() === '' ? t('transcript.silence') : text)
+        : (cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text));
 
     // The inline editor: a single-line auto-resizing textarea in place of the
     // text, following EditableTitle. It opens only from the hover pencil and
@@ -349,7 +415,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         />
                     ) : (
                         <div className="group flex items-start gap-1">
-                            <p className="flex-1 text-base text-gray-800 leading-relaxed">{displayText}</p>
+                            <p className="flex-1 text-base text-gray-800 leading-relaxed">
+                                {highlights && highlights.length > 0
+                                    ? renderHighlightedText(displayText, highlights)
+                                    : displayText}
+                            </p>
                             {canEditText && (
                                 <button
                                     type="button"
@@ -403,6 +473,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onSpeakerChange,
     onTextEdited,
     isDiarizing = false,
+    findOpen = false,
+    findMatches,
+    findActiveIndex = -1,
 }) => {
     const { t } = useTranslation();
     // Text edits close while a diarization pass runs: the pass reloads rows,
@@ -454,6 +527,40 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         isRecording,
         enableStreaming
     );
+
+    // Find & replace: one highlight list per hit row, identity-stable while
+    // the match list and the active position are, so memoized rows only
+    // re-render when their own ranges change. Rows without hits share the
+    // frozen empty list — still an array, still «panel open, raw display».
+    const highlightsBySegmentId = useMemo(() => {
+        if (!findOpen) return null;
+        const map = new Map<string, HighlightRange[]>();
+        (findMatches ?? []).forEach((match, index) => {
+            if (!match.segmentId) return;
+            const list = map.get(match.segmentId) ?? [];
+            list.push({ from: match.from, to: match.to, active: index === findActiveIndex });
+            map.set(match.segmentId, list);
+        });
+        return map;
+    }, [findOpen, findMatches, findActiveIndex]);
+
+    // Follow the active match: the virtualized list scrolls through the
+    // virtualizer (rows are absolutely positioned and unmeasured outside the
+    // viewport, so DOM anchors are unreliable there); the small-list branch
+    // uses the row's `segment-${id}` anchor directly.
+    useEffect(() => {
+        if (!findOpen || !findMatches) return;
+        const active = findActiveIndex >= 0 ? findMatches[findActiveIndex] : undefined;
+        if (!active?.segmentId) return;
+        const index = segments.findIndex(s => s.id === active.segmentId);
+        if (index === -1) return;
+        if (segments.length >= VIRTUALIZATION_THRESHOLD) {
+            virtualizer.scrollToIndex(index, { align: 'center' });
+        } else if (typeof document !== 'undefined') {
+            document.getElementById(`segment-${active.segmentId}`)
+                ?.scrollIntoView({ block: 'center' });
+        }
+    }, [findOpen, findMatches, findActiveIndex, segments, virtualizer]);
 
     // Infinite scroll: IntersectionObserver to trigger loading more
     useEffect(() => {
@@ -594,6 +701,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        highlights={highlightsBySegmentId
+                                            ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
+                                            : undefined}
                                     />
                                 </div>
                             );
@@ -657,6 +767,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         allowSpeakerEdit={!isRecording}
                                         onTextEdited={onTextEdited}
                                         allowTextEdit={allowTextEdit}
+                                        highlights={highlightsBySegmentId
+                                            ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
+                                            : undefined}
                                     />
                                 </motion.div>
                             );
