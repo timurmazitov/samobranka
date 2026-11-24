@@ -5,6 +5,43 @@ use sqlx::{Connection, Error as SqlxError, SqlitePool};
 use log::{error, info};
 use uuid::Uuid;
 
+/// Errors of the transcript-row commands. `Display` messages are user-facing
+/// and written in English, like the rest of the UI strings; they never carry
+/// the meeting content itself.
+#[derive(Debug)]
+pub enum TranscriptError {
+    /// The edited text is empty or whitespace-only after normalization.
+    EmptyText,
+    TranscriptNotFound(String),
+    Database(SqlxError),
+}
+
+impl std::fmt::Display for TranscriptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TranscriptError::EmptyText => write!(f, "transcript text cannot be empty"),
+            TranscriptError::TranscriptNotFound(id) => write!(f, "transcript not found: {id}"),
+            TranscriptError::Database(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for TranscriptError {}
+
+impl From<SqlxError> for TranscriptError {
+    fn from(error: SqlxError) -> Self {
+        TranscriptError::Database(error)
+    }
+}
+
+/// The authoritative single-line form of an edited transcript: every run of
+/// whitespace (newlines and tabs from pastes included) collapses to one
+/// space and the ends are trimmed. Mirrors what the display already does, so
+/// the saved value matches what the user sees after a reload.
+fn normalize_transcript_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub struct TranscriptsRepository;
 
 impl TranscriptsRepository {
@@ -122,6 +159,57 @@ impl TranscriptsRepository {
         Ok(meeting_id)
     }
 
+    /// Replaces the text of a single transcript segment. Only the text column
+    /// changes: timings and speaker attribution survive, and the meeting's
+    /// `updated_at` bumps like a rename does. The stored value is the
+    /// normalized single-line form (see [`normalize_transcript_text`]).
+    pub async fn update_text(
+        pool: &SqlitePool,
+        transcript_id: &str,
+        text: &str,
+    ) -> Result<(), TranscriptError> {
+        // Validation happens before a connection is checked out.
+        let text = normalize_transcript_text(text);
+        if text.is_empty() {
+            return Err(TranscriptError::EmptyText);
+        }
+
+        let mut conn = pool.acquire().await?;
+        let mut transaction = conn.begin().await?;
+
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT meeting_id, transcript FROM transcripts WHERE id = ?")
+                .bind(transcript_id)
+                .fetch_optional(&mut *transaction)
+                .await?;
+        let Some((meeting_id, current_text)) = row else {
+            transaction.rollback().await?;
+            return Err(TranscriptError::TranscriptNotFound(transcript_id.to_string()));
+        };
+
+        if current_text == text {
+            transaction.rollback().await?;
+            return Ok(());
+        }
+
+        sqlx::query("UPDATE transcripts SET transcript = ? WHERE id = ?")
+            .bind(&text)
+            .bind(transcript_id)
+            .execute(&mut *transaction)
+            .await?;
+
+        // An edit is a change of the meeting, so it bumps the meeting
+        // timestamp like a rename and a per-segment speaker change do.
+        sqlx::query("UPDATE meetings SET updated_at = ? WHERE id = ?")
+            .bind(Utc::now().naive_utc())
+            .bind(&meeting_id)
+            .execute(&mut *transaction)
+            .await?;
+
+        transaction.commit().await?;
+        Ok(())
+    }
+
     /// Searches for a query string within the transcripts.
     /// It returns a list of matching transcripts with context.
     pub async fn search_transcripts(
@@ -187,11 +275,11 @@ impl TranscriptsRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::TranscriptsRepository;
+    use super::{TranscriptError, TranscriptsRepository};
     use crate::api::TranscriptSegment;
     use crate::database::repositories::meeting::MeetingsRepository;
     use sqlx::sqlite::SqlitePoolOptions;
-    use sqlx::SqlitePool;
+    use sqlx::{Row, SqlitePool};
 
     async fn migrated_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -468,5 +556,185 @@ mod tests {
             "2026-11-18T14:32:05+00:00",
             "created_at stays the moment the row appeared"
         );
+    }
+
+    // --- update_text -----------------------------------------------------
+    //
+    // Fixtures follow the speaker-repository style: a bare meeting and one
+    // transcript row the tests can then edit by id.
+
+    async fn insert_meeting(pool: &SqlitePool, meeting_id: &str) {
+        sqlx::query("INSERT INTO meetings (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)")
+            .bind(meeting_id)
+            .bind("Meeting")
+            .bind("2024-01-01T00:00:00Z")
+            .bind("2024-01-01T00:00:00Z")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_transcript(
+        pool: &SqlitePool,
+        id: &str,
+        meeting_id: &str,
+        transcript: &str,
+        speaker: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, speaker, audio_start_time, audio_end_time, duration)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(meeting_id)
+        .bind(transcript)
+        .bind("2024-01-01T00:00:00Z")
+        .bind(speaker)
+        .bind(5.0)
+        .bind(9.5)
+        .bind(4.5)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn updated_at(pool: &SqlitePool, meeting_id: &str) -> String {
+        sqlx::query("SELECT updated_at FROM meetings WHERE id = ?")
+            .bind(meeting_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get("updated_at")
+    }
+
+    async fn transcript_row(pool: &SqlitePool, id: &str) -> (String, Option<String>, Option<f64>, Option<f64>, Option<f64>) {
+        let row = sqlx::query(
+            "SELECT transcript, speaker, audio_start_time, audio_end_time, duration FROM transcripts WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            row.get("transcript"),
+            row.get("speaker"),
+            row.get("audio_start_time"),
+            row.get("audio_end_time"),
+            row.get("duration"),
+        )
+    }
+
+    #[tokio::test]
+    async fn editing_text_changes_only_the_text_and_keeps_everything_else() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Old words", Some("speaker_0")).await;
+
+        TranscriptsRepository::update_text(&pool, "t-0", "Fixed words")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            transcript_row(&pool, "t-0").await,
+            (
+                "Fixed words".to_string(),
+                Some("speaker_0".to_string()),
+                Some(5.0),
+                Some(9.5),
+                Some(4.5),
+            ),
+            "timings and speaker survive the edit untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn editing_the_text_of_an_unknown_transcript_is_an_error() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+
+        let error = TranscriptsRepository::update_text(&pool, "nope", "Any text")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, TranscriptError::TranscriptNotFound(_)),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_text_edit_bumps_the_meeting_timestamp() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Old", None).await;
+        let before = updated_at(&pool, "meeting-1").await;
+
+        TranscriptsRepository::update_text(&pool, "t-0", "New")
+            .await
+            .unwrap();
+
+        assert_ne!(updated_at(&pool, "meeting-1").await, before);
+    }
+
+    #[tokio::test]
+    async fn resaving_the_same_text_does_not_bump_the_timestamp() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Same", Some("speaker_0")).await;
+        let before = updated_at(&pool, "meeting-1").await;
+
+        TranscriptsRepository::update_text(&pool, "t-0", "Same")
+            .await
+            .unwrap();
+
+        assert_eq!(updated_at(&pool, "meeting-1").await, before);
+    }
+
+    #[tokio::test]
+    async fn inserted_newlines_and_double_spaces_collapse_to_single_spaces() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Old", None).await;
+
+        TranscriptsRepository::update_text(&pool, "t-0", "  first  line\n\tsecond   line  ")
+            .await
+            .unwrap();
+
+        let (text, ..) = transcript_row(&pool, "t-0").await;
+        assert_eq!(text, "first line second line");
+    }
+
+    #[tokio::test]
+    async fn saving_a_normalization_of_the_current_text_changes_nothing() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "One two", None).await;
+        let before = updated_at(&pool, "meeting-1").await;
+
+        TranscriptsRepository::update_text(&pool, "t-0", "One  two\n")
+            .await
+            .unwrap();
+
+        assert_eq!(updated_at(&pool, "meeting-1").await, before);
+    }
+
+    #[tokio::test]
+    async fn an_empty_or_whitespace_only_text_is_rejected() {
+        let pool = migrated_pool().await;
+        insert_meeting(&pool, "meeting-1").await;
+        insert_transcript(&pool, "t-0", "meeting-1", "Keep me", Some("speaker_0")).await;
+
+        for text in ["", "   ", "\n\t "] {
+            let error = TranscriptsRepository::update_text(&pool, "t-0", text)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, TranscriptError::EmptyText),
+                "{text:?} must be rejected, got {error:?}"
+            );
+        }
+
+        let (stored, ..) = transcript_row(&pool, "t-0").await;
+        assert_eq!(stored, "Keep me", "nothing was written");
     }
 }

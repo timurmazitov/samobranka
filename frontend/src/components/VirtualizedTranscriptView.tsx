@@ -61,6 +61,19 @@ export interface VirtualizedTranscriptViewProps {
     meetingSpeakers?: MeetingSpeaker[];
     /** Called after a row's speaker was changed and refetched from the backend. */
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
+    /**
+     * Called after a row's text was saved; the meeting page applies it to the
+     * pagination state. The live panel passes nothing, so rows stay inert.
+     */
+    onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+}
+
+// Mirrors the Rust `normalize_transcript_text`: whitespace runs (newlines and
+// tabs from pastes included) collapse to single spaces and the ends trim.
+// The repository stays authoritative; normalizing here too keeps the
+// optimistic value identical to what the database will store.
+function normalizeTranscriptText(text: string): string {
+    return text.split(/\s+/).filter(Boolean).join(' ');
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -99,6 +112,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
     meetingSpeakers,
     onSpeakerChange,
     allowSpeakerEdit,
+    onTextEdited,
+    allowTextEdit,
 }: {
     id: string;
     timestamp: number;
@@ -112,9 +127,60 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onSpeakerChange?: (transcriptId: string, label: string | null) => void | Promise<void>;
     /** False while recording and when the host does not support row edits. */
     allowSpeakerEdit: boolean;
+    /** Called after the row's text was saved; absent on the live panel. */
+    onTextEdited?: (transcriptId: string, text: string) => void | Promise<void>;
+    /** False while recording; text edits exist only on the meeting page. */
+    allowTextEdit: boolean;
 }) {
     const { t } = useTranslation();
-    const displayText = cleanStopWords(text) || (text.trim() === '' ? t('transcript.silence') : text);
+
+    // Optimistic text state, mirroring the speaker override below: the saved
+    // value shows as soon as the backend accepted it, cleared when the page's
+    // state delivers the new text (or on failure).
+    const [textOverride, setTextOverride] = useState<string | null>(null);
+    useEffect(() => {
+        setTextOverride(null);
+    }, [text]);
+    const effectiveText = textOverride ?? text;
+    const displayText =
+        cleanStopWords(effectiveText) || (effectiveText.trim() === '' ? t('transcript.silence') : effectiveText);
+
+    // The inline editor: a single-line auto-resizing textarea in place of the
+    // text, following EditableTitle. It opens only from the hover pencil and
+    // is seeded from the RAW text — never the filler-cleaned display — so
+    // saving does not silently drop what the user saw.
+    const [isEditing, setIsEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const draftRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        if (draftRef.current && isEditing) {
+            draftRef.current.style.height = 'auto';
+            draftRef.current.style.height = `${draftRef.current.scrollHeight}px`;
+        }
+    }, [draft, isEditing]);
+
+    // The pencil exists only where an editor has a host: the meeting page
+    // passes a callback and opens the gate outside recording and streaming.
+    const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
+
+    const saveDraft = async () => {
+        if (!onTextEdited) return;
+        const normalized = normalizeTranscriptText(draft);
+        setIsEditing(false);
+        // An empty draft or an unchanged line stores nothing: the backend
+        // rejects empty text, and a no-op Enter must not bump the meeting.
+        if (!normalized || normalized === text) return;
+
+        setTextOverride(normalized);
+        try {
+            await invoke('api_update_transcript_text', { transcriptId: id, text: normalized });
+            await onTextEdited(id, normalized);
+        } catch (error) {
+            setTextOverride(null);
+            toast.error(t('transcript.updateTextFailed'), { description: String(error) });
+        }
+    };
 
     // Optimistic row state: set as soon as the user picks an item, cleared
     // once the refetched segment arrives (or on failure).
@@ -229,8 +295,62 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                         </div>
+                    ) : isEditing ? (
+                        <textarea
+                            ref={draftRef}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onBlur={() => { void saveDraft(); }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    // Single-line semantics: a transcript stays one
+                                    // logical line, so even Shift+Enter never inserts
+                                    // a newline (unlike EditableTitle).
+                                    e.preventDefault();
+                                    if (!e.shiftKey) {
+                                        void saveDraft();
+                                    }
+                                } else if (e.key === 'Escape') {
+                                    // Cancel: leave the editor without saving,
+                                    // the stored text was never touched.
+                                    e.preventDefault();
+                                    setIsEditing(false);
+                                }
+                            }}
+                            className="w-full text-base text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-2 py-1 resize-none overflow-hidden"
+                            autoFocus
+                            rows={1}
+                        />
                     ) : (
-                        <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
+                        <div className="group flex items-start gap-1">
+                            <p className="flex-1 text-base text-gray-800 leading-relaxed whitespace-pre-wrap">{displayText}</p>
+                            {canEditText && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        // Seed from the RAW text, never the cleaned display.
+                                        setDraft(text);
+                                        setIsEditing(true);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    title={t('transcript.editTextTooltip')}
+                                >
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    >
+                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                                    </svg>
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
@@ -254,6 +374,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onLoadMore,
     meetingSpeakers,
     onSpeakerChange,
+    onTextEdited,
 }) => {
     const { t } = useTranslation();
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
@@ -439,6 +560,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         meetingSpeakers={dropdownSpeakers}
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
+                                        onTextEdited={onTextEdited}
+                                        allowTextEdit={!isRecording}
                                     />
                                 </div>
                             );
@@ -500,6 +623,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         meetingSpeakers={dropdownSpeakers}
                                         onSpeakerChange={onSpeakerChange}
                                         allowSpeakerEdit={!isRecording}
+                                        onTextEdited={onTextEdited}
+                                        allowTextEdit={!isRecording}
                                     />
                                 </motion.div>
                             );

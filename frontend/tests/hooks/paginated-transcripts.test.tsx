@@ -180,6 +180,16 @@ describe('paginated transcript request ownership', () => {
     expect(state.segments[0]).toMatchObject({ speaker: undefined, speaker_name: undefined });
   });
 
+  test('a row text edit is visible in the segments before the next refetch', async () => {
+    await load('A');
+    await act(async () => { state.setTranscriptText('A', 'Fixed words'); });
+    expect(state.segments[0].text).toBe('Fixed words');
+    expect(state.transcripts[0].text).toBe('Fixed words');
+    // A rollback is the same call with the old value.
+    await act(async () => { state.setTranscriptText('A', 'A'); });
+    expect(state.segments[0].text).toBe('A');
+  });
+
   test('the metadata keeps the meeting moment the header renders', async () => {
     // The open meeting's date reaches the page through this hook, so a lost
     // field here would silently drop the header date even though the backend
