@@ -150,6 +150,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // is seeded from the RAW text — never the filler-cleaned display — so
     // saving does not silently drop what the user saw.
     const [isEditing, setIsEditing] = useState(false);
+    // A mirror of isEditing in a ref: a browser fires focusout when the
+    // focused textarea unmounts, and that stale blur handler still closes over
+    // the old draft. The ref — shared by every closure of the open editor —
+    // says whether an editor is actually open right now.
+    const editingRef = useRef(false);
     const [draft, setDraft] = useState('');
     const draftRef = useRef<HTMLTextAreaElement>(null);
 
@@ -165,14 +170,20 @@ const TranscriptSegment = memo(function TranscriptSegment({
     const canEditText = allowTextEdit && !!onTextEdited && !isStreaming;
 
     const saveDraft = async () => {
-        if (!onTextEdited) return;
-        const normalized = normalizeTranscriptText(draft);
+        if (!onTextEdited || !editingRef.current) return;
+        // Close the editor for every save path first: Enter, blur and a late
+        // focusout from the unmount all land here, and only the first call —
+        // the one that found the editor open — may save.
+        editingRef.current = false;
         setIsEditing(false);
-        // An empty draft or an unchanged line stores nothing: the backend
-        // rejects empty text, and a no-op Enter must not bump the meeting.
-        if (!normalized || normalized === text) return;
+        const normalized = normalizeTranscriptText(draft);
+        // An unchanged line stores nothing: a no-op Enter must not bump the
+        // meeting. An empty draft does reach the backend, which is the
+        // authority that rejects it, so the user gets the error toast.
+        if (normalized && normalized === text) return;
 
-        setTextOverride(normalized);
+        // Never optimistically blank the row while the backend decides.
+        if (normalized) setTextOverride(normalized);
         try {
             await invoke('api_update_transcript_text', { transcriptId: id, text: normalized });
             await onTextEdited(id, normalized);
@@ -312,8 +323,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     }
                                 } else if (e.key === 'Escape') {
                                     // Cancel: leave the editor without saving,
-                                    // the stored text was never touched.
+                                    // the stored text was never touched. Closing
+                                    // through editingRef means a focusout fired
+                                    // by the unmount below finds no open editor.
                                     e.preventDefault();
+                                    editingRef.current = false;
                                     setIsEditing(false);
                                 }
                             }}
@@ -330,6 +344,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                     onClick={() => {
                                         // Seed from the RAW text, never the cleaned display.
                                         setDraft(text);
+                                        editingRef.current = true;
                                         setIsEditing(true);
                                     }}
                                     className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
