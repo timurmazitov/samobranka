@@ -1048,6 +1048,7 @@
     "updateSpeakerFailed": "Failed to update speaker",
     "editTextTooltip": "Edit text",
     "updateTextFailed": "Failed to update text",
+    "updateTextFailedDescription": "The changes to this line were not saved.",
     "homeCopyTitle": "Copy Transcript",
     "homeExportTitle": "Export Transcript",
     "homeLanguageTitle": "Language",

@@ -195,7 +195,13 @@ const TranscriptSegment = memo(function TranscriptSegment({
             await onTextEdited(id, normalized);
         } catch (error) {
             setTextOverride(null);
-            toast.error(t('transcript.updateTextFailed'), { description: String(error) });
+            // The raw failure (possibly a driver-level message) belongs in the
+            // logs only: the toast carries just the translated strings, so no
+            // private meeting content or database detail can reach the user.
+            console.error('Failed to save transcript text:', error);
+            toast.error(t('transcript.updateTextFailed'), {
+                description: t('transcript.updateTextFailedDescription'),
+            });
         }
     };
 
@@ -357,7 +363,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         />
                     ) : (
                         <div className="group flex items-start gap-1">
-                            <p className="flex-1 text-base text-gray-800 leading-relaxed whitespace-pre-wrap">{displayText}</p>
+                            <p className="flex-1 text-base text-gray-800 leading-relaxed">{displayText}</p>
                             {canEditText && (
                                 <button
                                     type="button"

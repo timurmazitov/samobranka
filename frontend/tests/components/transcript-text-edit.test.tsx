@@ -343,6 +343,41 @@ describe('inline transcript text editing', () => {
     expect(text(view)).toContain('Original text');
   });
 
+  test('the failed-save toast shows a generic description, never the raw error', async () => {
+    // The raw failure (possibly a driver-level message) goes to the console
+    // for diagnostics; the toast only ever shows the translated text.
+    saveText = async () => {
+      throw new Error(
+        'error returned from database: (code: 19) UNIQUE constraint failed: transcripts.id',
+      );
+    };
+    const consoleErrors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => { consoleErrors.push(args); };
+    try {
+      const view = await render(
+        [{ id: 't1', timestamp: 0, text: 'Original text' }],
+        { onTextEdited: async () => {} },
+      );
+
+      await openEditor(view);
+      await type(view, 'Never stored');
+      await press(view, 'Enter');
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(errorNotify).toHaveBeenCalled();
+    const [title, options] = errorNotify.mock.calls[0] as [string, Record<string, unknown>];
+    expect(title).toBe('Failed to update text');
+    expect(options.description).toBe('The changes to this line were not saved.');
+    const toastText = JSON.stringify(errorNotify.mock.calls[0]);
+    expect(toastText).not.toContain('UNIQUE constraint');
+    expect(toastText).not.toContain('database');
+    // Diagnostics keep the raw error for the logs.
+    expect(consoleErrors.some(entry => String(entry).includes('UNIQUE constraint'))).toBe(true);
+  });
+
   test('a whitespace-only draft is rejected by the backend and toasts an error', async () => {
     // The repository is authoritative on "never empty" (it rejects the save),
     // and the row surfaces that rejection like any other failed save.
@@ -387,9 +422,11 @@ describe('inline transcript text editing', () => {
     expect(errorNotify).toHaveBeenCalled();
     const [title, options] = errorNotify.mock.calls[0];
     // The title is the translated, generic label and the description is the
-    // backend's own message — neither carries the old text or the discarded
-    // draft (the command's errors only ever mention the row id).
+    // translated fallback text — the backend's raw message (and any private
+    // meeting content or driver detail inside it) reaches the logs, not the
+    // user.
     expect(title).toBe('Failed to update text');
+    expect(options).toMatchObject({ description: 'The changes to this line were not saved.' });
     const toastText = JSON.stringify([title, options]);
     expect(toastText).not.toContain('Secret meeting words');
     expect(toastText).not.toContain('Confidential private correction');
