@@ -187,6 +187,12 @@ export default function PageContent({
     segments: segments ?? [],
     summaryBlocks,
     loadAllPages: onLoadAllPages,
+    // Replacement reuses the same save callback the row editor uses: the page
+    // wires it to the pagination hook's optimistic setTranscriptText (with
+    // rollback), and page-content fires the stale-summary hint after a
+    // successful save — replaced segments therefore persist and hint exactly
+    // like manually edited rows.
+    onTextEdited: handleTranscriptTextEdited,
   });
   const { openPanel, closePanel } = findReplace;
 
@@ -367,6 +373,8 @@ export default function PageContent({
         open={findReplace.open}
         query={findReplace.query}
         onQueryChange={findReplace.setQuery}
+        replaceText={findReplace.replaceText}
+        onReplaceTextChange={findReplace.setReplaceText}
         caseSensitive={findReplace.caseSensitive}
         onCaseSensitiveChange={findReplace.setCaseSensitive}
         wholeWord={findReplace.wholeWord}
@@ -377,6 +385,9 @@ export default function PageContent({
         onPrevious={findReplace.goPrev}
         onNext={findReplace.goNext}
         onClose={closePanel}
+        onReplaceActive={findReplace.replaceActive}
+        onReplaceAll={findReplace.replaceAll}
+        replaceableCount={findReplace.replaceableCount}
         focusTarget={findReplace.focusTarget}
         focusNonce={findReplace.focusNonce}
         sidebarCollapsed={isCollapsed}

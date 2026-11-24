@@ -14,7 +14,7 @@ const invoke = mock((command: string, args: Record<string, unknown>) => new Prom
   requests.push({ command, args, resolve, reject });
 }));
 mock.module('@tauri-apps/api/core', () => ({ ...originalCore, invoke }));
-const { useFindReplace } = await import('../../src/hooks/meeting-details/useFindReplace');
+const { useFindReplace, ReplaceAllPartialFailureError } = await import('../../src/hooks/meeting-details/useFindReplace');
 const { usePaginatedTranscripts } = await import('../../src/hooks/usePaginatedTranscripts');
 afterAll(() => mock.module('@tauri-apps/api/core', () => originalCore));
 
@@ -34,6 +34,12 @@ const SEGMENTS: TranscriptSegmentData[] = [
   { id: 's2', timestamp: 1, text: 'Beta again, Бета too' },
   { id: 's3', timestamp: 2, text: 'uh, alpha at the end: alpha' },
   { id: 's4', timestamp: 3, text: 'motor and motoring' },
+];
+
+type HostedSegment = { id: string; text: string; timestamp: string; audio_start_time: number };
+const HOSTED_SEGMENTS: HostedSegment[] = [
+  { id: 't1', text: 'Alpha beta gamma', timestamp: '00:00', audio_start_time: 0 },
+  { id: 't2', text: 'beta mid and alpha tail', timestamp: '00:01', audio_start_time: 1 },
 ];
 
 function View({
@@ -449,5 +455,227 @@ describe('useFindReplace with the paginated host', () => {
     ]);
     // Nothing more to load: the loop stops when the backend says so.
     expect(requests.filter(r => r.command === 'api_get_meeting_transcripts')).toHaveLength(2);
+  });
+});
+
+/**
+ * Replacement tests run through the real composition the meeting page uses:
+ * the pagination hook owns the segments (optimistic text updates and rollback
+ * included) and the find hook receives them plus the page-content save
+ * callback, so a replace must go through `api_update_transcript_text` exactly
+ * like the row editor does — never through a second save path.
+ */
+describe('useFindReplace replacement', () => {
+  let host: ReturnType<typeof usePaginatedTranscripts>;
+  function Hosted() {
+    host = usePaginatedTranscripts({ meetingId: 'M' });
+    state = useFindReplace({
+      segments: host.segments,
+      loadAllPages: host.loadAllPages,
+      onTextEdited: host.setTranscriptText,
+    });
+    return null;
+  }
+
+  async function hosted(
+    texts: Partial<Record<'t1' | 't2', string>> = {},
+  ) {
+    await act(async () => { renderer = create(<Hosted />); });
+    const metadata = requests.find(r => r.command === 'api_get_meeting_metadata');
+    expect(metadata).toBeDefined();
+    await act(async () => {
+      metadata!.resolve({ id: 'M', title: 'M', created_at: '2026-09-07', updated_at: '2026-09-07' } satisfies MeetingMetadata);
+    });
+    const firstPage = requests.find(r => r.command === 'api_get_meeting_transcripts');
+    expect(firstPage).toBeDefined();
+    await act(async () => {
+      firstPage!.resolve({
+        transcripts: HOSTED_SEGMENTS.map(s => ({ ...s, text: texts[s.id as 't1' | 't2'] ?? s.text })),
+        total_count: HOSTED_SEGMENTS.length,
+        has_more: false,
+      } satisfies PaginatedTranscriptsResponse);
+    });
+    await act(async () => { state.openPanel(); });
+  }
+
+  function editRequests() {
+    return requests.filter(r => r.command === 'api_update_transcript_text');
+  }
+
+  test('replacing the active match saves the segment text and advances to the next match', async () => {
+    await hosted();
+    await setQuery('beta');
+    expect(state.matches.map(m => m.segmentId)).toEqual(['t1', 't2']);
+    expect(state.activeIndex).toBe(0);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    let replaceError: unknown = null;
+    await act(async () => { void state.replaceActive().catch(error => { replaceError = error; }); });
+
+    const edits = editRequests();
+    expect(edits).toHaveLength(1);
+    expect(edits[0].args).toEqual({ transcriptId: 't1', text: 'Alpha Zeta gamma' });
+    await act(async () => { edits[0].resolve({ message: 'ok' }); });
+    expect(replaceError).toBe(null);
+
+    // VS Code behavior: focus moves to the next match — here the only
+    // remaining one (the t2 «beta» after the replaced «alpha» tail).
+    expect(state.matches.map(m => m.segmentId)).toEqual(['t2']);
+    expect(state.activeIndex).toBe(0);
+    expect(state.current).toBe(1);
+    expect(state.total).toBe(1);
+  });
+
+  test('a replacement whose text re-matches leaves a sane list and lands past the written text', async () => {
+    await hosted();
+    await setQuery('beta');
+    expect(state.total).toBe(2);
+
+    // «beta beta» still contains the query: after the save the segment holds
+    // two fresh matches, and the list must recompute from the real text —
+    // active lands on the one after the text just written, never a stale
+    // range into the old text.
+    await act(async () => { state.setReplaceText('beta beta'); });
+    await act(async () => { void state.replaceActive(); });
+
+    const edits = editRequests();
+    expect(edits).toHaveLength(1);
+    expect(edits[0].args).toEqual({ transcriptId: 't1', text: 'Alpha beta beta gamma' });
+    await act(async () => { edits[0].resolve({ message: 'ok' }); });
+
+    expect(state.matches).toEqual([
+      { key: 'transcript:t1:0', source: 'transcript', segmentId: 't1', from: 6, to: 10 },
+      { key: 'transcript:t1:1', source: 'transcript', segmentId: 't1', from: 11, to: 15 },
+      { key: 'transcript:t2:0', source: 'transcript', segmentId: 't2', from: 0, to: 4 },
+    ]);
+    expect(state.activeIndex).toBe(1);
+  });
+
+  test('replace all saves once per changed segment with every match spliced out', async () => {
+    await hosted({ t2: 'beta mid and beta tail' });
+    // «beta» in t1 once, t2 twice — three matches over two segments.
+    await setQuery('beta');
+    expect(state.total).toBe(3);
+    expect(state.replaceableCount).toBe(3);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceAll(); });
+
+    const edits = editRequests();
+    // The saves are sequenced, not parallel: only the first is in flight; the
+    // second starts once the first settles.
+    expect(edits).toHaveLength(1);
+    // All of the segment's ranges splice out of the raw text at once.
+    expect(edits[0].args).toEqual({ transcriptId: 't1', text: 'Alpha Zeta gamma' });
+    await act(async () => { edits[0].resolve({ message: 'ok' }); });
+    expect(editRequests()).toHaveLength(2);
+    expect(editRequests()[1].args).toEqual({ transcriptId: 't2', text: 'Zeta mid and Zeta tail' });
+    await act(async () => { editRequests()[1].resolve({ message: 'ok' }); });
+
+    // Every match replaced: nothing survives the recompute.
+    expect(state.matches).toEqual([]);
+    expect(state.activeIndex).toBe(-1);
+  });
+
+  test('an empty replace field deletes the matched text', async () => {
+    await hosted();
+    await setQuery('beta');
+
+    // The field is left empty — «Заменить» must delete the match, exactly as
+    // replacing with nothing in an editor does.
+    await act(async () => { void state.replaceActive(); });
+
+    const edits = editRequests();
+    expect(edits).toHaveLength(1);
+    expect(edits[0].args).toEqual({ transcriptId: 't1', text: 'Alpha gamma' });
+    await act(async () => { edits[0].resolve({ message: 'ok' }); });
+    expect(state.matches.map(m => m.segmentId)).toEqual(['t2']);
+    expect(state.activeIndex).toBe(0);
+  });
+
+  test('a replace with nothing to replace invokes no save', async () => {
+    await hosted();
+    await setQuery('zebra');
+    expect(state.noMatches).toBe(true);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { await state.replaceActive(); });
+    await act(async () => { await state.replaceAll(); });
+
+    expect(editRequests()).toHaveLength(0);
+  });
+
+  test('a failed single replace keeps the active match on the rolled-back text', async () => {
+    await hosted();
+    await setQuery('beta');
+    expect(state.activeIndex).toBe(0);
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    let replaceError: unknown = null;
+    await act(async () => {
+      void state.replaceActive().catch(error => { replaceError = error; });
+    });
+
+    const edits = editRequests();
+    expect(edits).toHaveLength(1);
+    // The host's rollback path: the optimistic row text comes back, the error
+    // rethrows. The find state must follow the actual text, not the fantasy.
+    await act(async () => { edits[0].reject(new Error('database is locked')); });
+
+    // Same text, same match list, same active position — the user sees the
+    // match they could not replace still in front of them, and the caller is
+    // told the save failed (the panel toasts, like the row editor does).
+    expect(String(replaceError)).toContain('database is locked');
+    expect(host.segments[0].text).toBe('Alpha beta gamma');
+    expect(state.matches.map(m => m.segmentId)).toEqual(['t1', 't2']);
+    expect(state.activeIndex).toBe(0);
+  });
+
+  test('a failed replace of a later match lands back on that match, not the list head', async () => {
+    await hosted();
+    await setQuery('beta');
+    await act(async () => { state.goNext(); });
+    expect(state.activeIndex).toBe(1); // the t2 match
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    await act(async () => { void state.replaceActive().catch(() => {}); });
+    await act(async () => { editRequests()[0].reject(new Error('database is locked')); });
+
+    // The optimistic t2 rewrite was rolled back; the active position returns
+    // to that same match rather than jumping to the list head.
+    expect(state.matches.map(m => m.segmentId)).toEqual(['t1', 't2']);
+    expect(state.activeIndex).toBe(1);
+    expect(state.matches[1]).toEqual({ key: 'transcript:t2:0', source: 'transcript', segmentId: 't2', from: 0, to: 4 });
+  });
+
+  test('replace all with one failed segment leaves only that segment\'s matches', async () => {
+    await hosted({ t2: 'beta mid and beta tail' });
+    await setQuery('beta');
+
+    await act(async () => { state.setReplaceText('Zeta'); });
+    let replaceAllError: unknown = null;
+    let replaceAllDone = false;
+    await act(async () => {
+      void state.replaceAll()
+        .catch(error => { replaceAllError = error; })
+        .finally(() => { replaceAllDone = true; });
+    });
+
+    // The first save fails (rolls back t1), the second one lands.
+    await act(async () => { editRequests()[0].reject(new Error('database is locked')); });
+    expect(editRequests()).toHaveLength(2);
+    await act(async () => { editRequests()[1].resolve({ message: 'ok' }); });
+    expect(replaceAllDone).toBe(true);
+
+    // t1 is rolled back to its original text with its match; t2's text holds
+    // no «beta» and drops out of the list. No stale ranges survive either way.
+    expect(host.segments.map(s => s.text)).toEqual(['Alpha beta gamma', 'Zeta mid and Zeta tail']);
+    expect(state.matches).toEqual([
+      { key: 'transcript:t1:0', source: 'transcript', segmentId: 't1', from: 6, to: 10 },
+    ]);
+    expect(state.activeIndex).toBe(0);
+    // The caller is told exactly how many saves failed — with no raw text.
+    expect(replaceAllError).toBeInstanceOf(ReplaceAllPartialFailureError);
+    expect((replaceAllError as InstanceType<typeof ReplaceAllPartialFailureError>).failedCount).toBe(1);
   });
 });
