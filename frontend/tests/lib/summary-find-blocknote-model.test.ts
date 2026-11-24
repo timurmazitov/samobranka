@@ -86,7 +86,7 @@ const { BlockNoteEditor } = await import('@blocknote/core');restoreDomStub();
 afterAll(restoreDomStub);
 
 const reveal = await import('../../src/lib/summary-find-reveal');
-const { buildBlockNoteSummaryBlocks } = await import('../../src/hooks/meeting-details/useFindReplace');
+const { buildBlockNoteSummaryBlocks } = await import('../../src/lib/summary-find-blocks');
 type PMBlockEntry = import('../../src/lib/summary-find-reveal').PMBlockEntry;
 
 /**

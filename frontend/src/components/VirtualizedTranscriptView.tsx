@@ -34,8 +34,6 @@ import type { Match } from '@/hooks/meeting-details/useFindReplace';
 interface HighlightRange {
     from: number;
     to: number;
-    /** The match the panel navigates to: drawn apart from the rest. */
-    active: boolean;
 }
 
 export interface VirtualizedTranscriptViewProps {
@@ -120,18 +118,24 @@ function cleanStopWords(text: string): string {
 
 // A row's find-panel ranges rendered as <mark>s. The active match — the one
 // the panel's counter points at — is drawn distinctly so the user can see
-// where they are in the list.
-function renderHighlightedText(text: string, highlights: HighlightRange[]) {
+// where they are in the list. The ranges carry no active flag: the row is
+// handed the active match separately (a stable member of the match list), so
+// ↑/↓ re-renders only the two rows the position moves between — the range
+// arrays stay identity-stable for the whole list.
+function renderHighlightedText(text: string, highlights: HighlightRange[], activeMatch: Match | null) {
     const nodes: React.ReactNode[] = [];
     let cursor = 0;
     highlights.forEach((range, index) => {
         if (range.from > cursor) {
             nodes.push(text.slice(cursor, range.from));
         }
+        const active = activeMatch !== null
+            && range.from === activeMatch.from
+            && range.to === activeMatch.to;
         nodes.push(
             <mark
                 key={`${range.from}-${range.to}-${index}`}
-                className={range.active
+                className={active
                     ? 'bg-yellow-300 text-gray-900 rounded-sm'
                     : 'bg-yellow-100 text-gray-900 rounded-sm'}
             >
@@ -166,6 +170,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onTextEdited,
     allowTextEdit,
     highlights,
+    activeMatch,
 }: {
     id: string;
     timestamp: number;
@@ -191,6 +196,13 @@ const TranscriptSegment = memo(function TranscriptSegment({
      * rows only re-render when their own highlights change.
      */
     highlights?: HighlightRange[];
+    /**
+     * The row's match the panel's counter points at, drawn apart from the
+     * rest; null while no match of this row is active. A stable member of the
+     * match list, passed separately from `highlights` (which never carries an
+     * active flag) so ↑/↓ re-renders only the two rows it moves between.
+     */
+    activeMatch?: Match | null;
 }) {
     const { t } = useTranslation();
 
@@ -417,7 +429,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <div className="group flex items-start gap-1">
                             <p className="flex-1 text-base text-gray-800 leading-relaxed">
                                 {highlights && highlights.length > 0
-                                    ? renderHighlightedText(displayText, highlights)
+                                    ? renderHighlightedText(displayText, highlights, activeMatch ?? null)
                                     : displayText}
                             </p>
                             {canEditText && (
@@ -529,20 +541,32 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     );
 
     // Find & replace: one highlight list per hit row, identity-stable while
-    // the match list and the active position are, so memoized rows only
-    // re-render when their own ranges change. Rows without hits share the
-    // frozen empty list — still an array, still «panel open, raw display».
+    // the match list is, so memoized rows only re-render when their own
+    // ranges change. Rows without hits share the frozen empty list — still an
+    // array, still «panel open, raw display». The active match is NOT baked
+    // into these arrays: the row is handed the active Match (a stable member
+    // of the list) separately, so ↑/↓ change that prop on exactly two rows
+    // (the ones the position moved off and to) instead of rebuilding every
+    // hit row's array on every navigation step.
     const highlightsBySegmentId = useMemo(() => {
         if (!findOpen) return null;
         const map = new Map<string, HighlightRange[]>();
-        (findMatches ?? []).forEach((match, index) => {
+        (findMatches ?? []).forEach(match => {
             if (!match.segmentId) return;
             const list = map.get(match.segmentId) ?? [];
-            list.push({ from: match.from, to: match.to, active: index === findActiveIndex });
+            list.push({ from: match.from, to: match.to });
             map.set(match.segmentId, list);
         });
         return map;
-    }, [findOpen, findMatches, findActiveIndex]);
+    }, [findOpen, findMatches]);
+
+    // The active match, only while it is a transcript match (a summary match
+    // must not bleed into the rows); the row's prop is this same object
+    // reference (or null), stable per match list.
+    const activeCandidate = findOpen && findActiveIndex >= 0
+        ? findMatches?.[findActiveIndex] ?? null
+        : null;
+    const activeTranscriptMatch = activeCandidate?.source === 'transcript' ? activeCandidate : null;
 
     // Follow the active match: the virtualized list scrolls through the
     // virtualizer (rows are absolutely positioned and unmeasured outside the
@@ -704,6 +728,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
+                                        activeMatch={activeTranscriptMatch?.segmentId === segment.id
+                                            ? activeTranscriptMatch
+                                            : null}
                                     />
                                 </div>
                             );
@@ -770,6 +797,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         highlights={highlightsBySegmentId
                                             ? highlightsBySegmentId.get(segment.id) ?? NO_HIGHLIGHTS
                                             : undefined}
+                                        activeMatch={activeTranscriptMatch?.segmentId === segment.id
+                                            ? activeTranscriptMatch
+                                            : null}
                                     />
                                 </motion.div>
                             );

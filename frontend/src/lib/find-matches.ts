@@ -24,6 +24,19 @@ export interface MatchRange {
   to: number;
 }
 
+/**
+ * Splice one matched range out of the text it was found in: the text before
+ * `range.from`, the replacement, then the text after `range.to`. `from`/`to`
+ * are UTF-16 indices into exactly this string (the same source `findMatches`
+ * scanned), so the edit is a plain slice — `replacement` may be '' for a
+ * deletion, exactly like replacing with an empty string in an editor. The one
+ * splice rule for both find & replace sides: the transcript's segment saves
+ * and the legacy summary's plain-content replacements.
+ */
+export function spliceMatchRange(text: string, range: MatchRange, replacement: string): string {
+  return text.slice(0, range.from) + replacement + text.slice(range.to);
+}
+
 export interface FindMatchesOptions {
   /** Match the query's exact spelling. Default: case-insensitive. */
   caseSensitive?: boolean;

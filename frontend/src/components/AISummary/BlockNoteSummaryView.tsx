@@ -13,9 +13,9 @@ import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
 import {
   buildBlockNoteSummaryBlocks,
   buildLegacySummaryBlocks,
-  type Match,
   type SummaryBlock,
-} from '@/hooks/meeting-details/useFindReplace';
+} from '@/lib/summary-find-blocks';
+import type { Match } from '@/hooks/meeting-details/useFindReplace';
 import {
   applyLegacySummaryReplacements,
   applySummaryReplacements,

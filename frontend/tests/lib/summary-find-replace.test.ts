@@ -87,7 +87,7 @@ restoreDomStub();
 afterAll(restoreDomStub);
 
 const { applySummaryReplacements } = await import('../../src/lib/summary-find-replace');
-const { buildBlockNoteSummaryBlocks } = await import('../../src/hooks/meeting-details/useFindReplace');
+const { buildBlockNoteSummaryBlocks } = await import('../../src/lib/summary-find-blocks');
 const reveal = await import('../../src/lib/summary-find-reveal');
 type SummaryReplaceEdit = import('../../src/lib/summary-find-replace').SummaryReplaceEdit;
 
