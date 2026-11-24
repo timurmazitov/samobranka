@@ -139,6 +139,7 @@ export function usePaginatedTranscripts({
         offset: number,
         append: boolean = true,
         limit: number = DEFAULT_PAGE_SIZE,
+        options?: { suppressError?: boolean },
     ): Promise<Transcript[]> => {
         if (!meetingId || !isCurrentRequest(requestId)) return [];
 
@@ -180,7 +181,11 @@ export function usePaginatedTranscripts({
         } catch (err) {
             if (!isCurrentRequest(requestId)) return [];
             console.error('Failed to load transcripts:', err);
-            setError('Failed to load transcripts');
+            // The post-delete window reload is the only caller that suppresses
+            // the error state: its failure must not surface as a hook error,
+            // because the page turns that into its full-screen error and would
+            // undo the successful delete's UI. The failure is still logged.
+            if (!options?.suppressError) setError('Failed to load transcripts');
             return [];
         }
     }, [meetingId, isCurrentRequest]);
@@ -390,12 +395,16 @@ export function usePaginatedTranscripts({
         // least a full page comes back, so deleting every loaded row of a
         // partially loaded meeting pulls the tail rows in instead of
         // stranding an empty list that the scroll trigger (rows > 0 only)
-        // cannot revive. A failed reload leaves the honest optimistic state
-        // in place: the delete itself already succeeded. `offsetRef.current`
+        // cannot revive. A failed reload changes nothing: the delete already
+        // committed, so the honest optimistic state stays and the promise
+        // still resolves — the caller (selection clear, stale-summary hint)
+        // must not be undone by a re-read it can no longer prevent. The
+        // failure is logged, never surfaced as a hook error (that would
+        // clobber the page with its full-screen error). `offsetRef.current`
         // is the post-delete loaded count (already moved back above).
         if (options?.refetchWindow) {
             const windowSize = Math.max(offsetRef.current, DEFAULT_PAGE_SIZE);
-            await loadTranscriptsAtOffset(requestId, 0, false, windowSize);
+            await loadTranscriptsAtOffset(requestId, 0, false, windowSize, { suppressError: true });
         }
     }, [meetingId, isCurrentRequest, loadTranscriptsAtOffset]);
 

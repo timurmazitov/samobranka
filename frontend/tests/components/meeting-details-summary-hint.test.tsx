@@ -359,6 +359,29 @@ describe('regenerate-summary hint on the meeting page', () => {
     expect(regenerate).toHaveBeenCalledTimes(1);
   });
 
+  test('a bulk delete whose window refetch failed still clears the selection and offers regeneration once', async () => {
+    // The stand-in resolves the way the pagination hook does after a
+    // committed delete whose window re-read failed: the hook logs the
+    // error and swallows it, so the page must still complete the batch's
+    // consequences — clear the selection and fire the single hint —
+    // instead of treating the batch as failed.
+    summaryStatus = 'completed';
+    const bulk = mock(async (_ids: string[]) => {});
+    await show({ onSegmentsBulkDeleted: bulk });
+    await act(async () => { panelProps.onToggleSelection(); });
+    await act(async () => { panelProps.onToggleSelected('t1'); });
+    await act(async () => { panelProps.onToggleSelected('t2'); });
+
+    await act(async () => { await panelProps.onSegmentsBulkDeleted(['t1', 't2']); });
+
+    expect(bulk).toHaveBeenCalledWith(['t1', 't2']);
+    expect(panelProps.selectedIds).toEqual([]);
+    expect(infoNotify).toHaveBeenCalledTimes(1);
+    const [message, options] = infoNotify.mock.calls[0] as [string, Record<string, any>];
+    expect(message).toBe('The summary no longer matches your edited transcript.');
+    expect(options.id).toBe('transcript-edit-summary-hint');
+  });
+
   test('a bulk delete with no summary shows no hint', async () => {
     const bulk = mock(async (_ids: string[]) => {});
     await show({ onSegmentsBulkDeleted: bulk });

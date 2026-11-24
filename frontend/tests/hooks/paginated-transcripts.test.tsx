@@ -406,6 +406,40 @@ describe('paginated transcript request ownership', () => {
     expect(state.totalCount).toBe(2);
   });
 
+  test('a refetch failure after a successful bulk delete does not surface as a hook error', async () => {
+    // The delete itself committed; only the window re-read failed. The
+    // promise must still resolve — the page clears the selection and fires
+    // the stale-summary hint on a resolved delete — and the failure must be
+    // logged, not raised as a hook error: the page turns that into its
+    // full-screen error and would undo the successful delete's UI.
+    const originalError = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => { logged.push(args); };
+    try {
+      await show('A');
+      await resolve(request('metadata', 'A'), metadata('A'));
+      await resolve(request('transcripts', 'A'), manyPage(['t1', 't2'], 4, true));
+
+      let failure: unknown = null;
+      await act(async () => {
+        void state.deleteTranscripts(['t1', 't2'], { refetchWindow: true }).catch(error => { failure = error; });
+      });
+      await resolve(deleteRequest('A'), { message: 'ok' });
+
+      await act(async () => { request('transcripts', 'A', 1).reject(new Error('offline')); });
+
+      expect(failure).toBeNull();
+      expect(state.segments.map(s => s.id)).toEqual([]);
+      expect(state.totalCount).toBe(2);
+      expect(state.error).toBeNull();
+      // The failure is still logged for diagnostics.
+      expect(logged[0]?.[0]).toBe('Failed to load transcripts:');
+      expect(logged[0]?.[1]).toBeInstanceOf(Error);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test('a single delete does not spend a window reload', async () => {
     await show('A');
     await resolve(request('metadata', 'A'), metadata('A'));
