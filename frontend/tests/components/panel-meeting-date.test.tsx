@@ -122,7 +122,8 @@ beforeEach(() => {
     removeEventListener: () => {},
     setTimeout: () => 0,
     clearTimeout: () => {},
-    // The split view asks the media query whether both panes are visible.
+    // Kept for any consumer that probes media queries; the split view no
+    // longer branches on viewport width.
     matchMedia: () => ({
       matches: true,
       addEventListener: () => {},
@@ -328,30 +329,40 @@ test('a meeting without a date draws no corner in the summary window', async () 
 // --- Slice 4: switching tabs cannot duplicate the date ---------------------
 
 test('the date appears exactly once across both tabs', async () => {
-  // The split view mounts both tabs (`forceMount`) and only hides one, so a
-  // single tree with both panels is exactly what the user sees on desktop.
+  // The split view mounts only the active tab, so each tab gets its own
+  // render: the date lives in the summary text window and nowhere else.
   const { MeetingDetailsSplitView } = await import(
     '../../src/components/MeetingDetails/MeetingDetailsSplitView'
   );
 
-  const view = await render(
+  const splitView = (activeTab: 'transcript' | 'summary') => (
     <MeetingDetailsSplitView
-      activeTab="transcript"
+      activeTab={activeTab}
       onTabChange={() => {}}
       transcript={<TranscriptPanel {...transcriptProps()} />}
       summary={
         <SummaryPanel {...summaryProps({ meetingDate, aiSummary: visibleSummary })} />
       }
-    />,
+    />
   );
 
-  const dates = view.root.findAll(
+  const transcriptTab = await render(splitView('transcript'));
+  expect(
+    transcriptTab.root.findAll(
+      (node) => typeof node.type === 'string' && String(node.props.className).includes('tabular-nums'),
+    ),
+  ).toHaveLength(0);
+  expect(dateRows(transcriptTab, TRANSCRIPT_ROOT)).toHaveLength(0);
+
+  if (renderer) await act(async () => renderer!.unmount());
+  const summaryTab = await render(splitView('summary'));
+
+  const dates = summaryTab.root.findAll(
     (node) => typeof node.type === 'string' && String(node.props.className).includes('tabular-nums'),
   );
   expect(dates).toHaveLength(1);
   expect(textOf(dates[0].props.children)).toBe(expectedDate);
-  expect(dateRows(view, SUMMARY_ROOT)).toHaveLength(0);
-  expect(dateRows(view, TRANSCRIPT_ROOT)).toHaveLength(0);
+  expect(dateRows(summaryTab, SUMMARY_ROOT)).toHaveLength(0);
 });
 
 // --- Slice 5: the full meeting title heads the summary text window ---------
@@ -435,28 +446,34 @@ test('the title never appears in the transcript panel and never duplicates in sp
   expect(viewText(transcriptOnly)).not.toContain('Planning call');
   if (renderer) await act(async () => renderer!.unmount());
 
-  // The split view mounts both tabs (`forceMount`), like the desktop layout:
-  // the title must be read once, next to the summary, nowhere else.
+  // The split view mounts only the active tab: the title is read once, next
+  // to the summary, and the transcript tab shows no title at all.
   const { MeetingDetailsSplitView } = await import(
     '../../src/components/MeetingDetails/MeetingDetailsSplitView'
   );
 
-  const view = await render(
+  const splitView = (activeTab: 'transcript' | 'summary') => (
     <MeetingDetailsSplitView
-      activeTab="transcript"
+      activeTab={activeTab}
       onTabChange={() => {}}
       transcript={<TranscriptPanel {...transcriptProps()} />}
       summary={
         <SummaryPanel {...summaryProps({ meetingDate, aiSummary: visibleSummary })} />
       }
-    />,
+    />
   );
 
-  const titles = headings(view, 'h1');
+  const transcriptTab = await render(splitView('transcript'));
+  expect(headings(transcriptTab, 'h1')).toHaveLength(0);
+
+  if (renderer) await act(async () => renderer!.unmount());
+  const summaryTab = await render(splitView('summary'));
+
+  const titles = headings(summaryTab, 'h1');
   expect(titles).toHaveLength(1);
   expect(textOf(titles[0].props.children)).toBe('Planning call');
   // The date remains the only element with tabular figures in the row.
-  const corners = view.root.findAll(
+  const corners = summaryTab.root.findAll(
     (node) => typeof node.type === 'string' && String(node.props.className).includes('tabular-nums'),
   );
   expect(corners).toHaveLength(1);

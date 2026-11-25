@@ -336,11 +336,11 @@ describe('MeetingDetailsSplitView', () => {
     />
   );
 
-  test('names the separator and the tabs from the catalogs', async () => {
+  test('names the tabs from the catalogs', async () => {
     await expectTranslated(
       element,
-      ['meetingDetails.split.resizeAria', 'meetingDetails.split.tabTranscript'],
-      ['Resize transcript and summary'],
+      ['meetingDetails.split.tabTranscript', 'meetingDetails.split.tabSummary'],
+      ['Transcript', 'Summary'],
     );
   });
 });

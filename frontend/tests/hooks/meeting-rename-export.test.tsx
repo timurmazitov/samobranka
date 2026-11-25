@@ -24,6 +24,20 @@ const originalRecordingState = { ...await import('../../src/contexts/RecordingSt
 const originalImportDialog = { ...await import('../../src/contexts/ImportDialogContext') };
 const originalOllamaDownload = { ...await import('../../src/contexts/OllamaDownloadContext') };
 const originalLanguageContext = { ...await import('../../src/contexts/LanguageContext') };
+// Radix Presence picks React.useLayoutEffect only when `document` exists at
+// module load; without it the hook is a no-op and the meeting view's inactive
+// tab never unmounts here (in the app a document always exists). Declared
+// before the Radix-backed imports below so those modules load with the real
+// hook; the true original is restored in `afterAll`.
+const documentBeforeShim = Object.getOwnPropertyDescriptor(globalThis, 'document');
+Object.defineProperty(globalThis, 'document', {
+  configurable: true,
+  value: Object.assign(new EventTarget(), {
+    visibilityState: 'visible',
+    // Module-scope feature detection (prosemirror) reads this at import time.
+    documentElement: { style: {} },
+  }),
+});
 const originalDialog = { ...await import('../../src/components/ui/dialog') };
 const originalPopover = { ...await import('../../src/components/ui/popover') };
 const originalTooltip = { ...await import('../../src/components/ui/tooltip') };
@@ -51,6 +65,8 @@ afterAll(() => {
   mock.module('../../src/components/Logo', () => originalLogo);
   mock.module('../../src/components/ModelSettingsModal', () => originalModelSettingsModal);
   // framer-motion stays mocked for the process, as the other component suites do.
+  if (documentBeforeShim) Object.defineProperty(globalThis, 'document', documentBeforeShim);
+  else Reflect.deleteProperty(globalThis, 'document');
 });
 
 const React = { ...await import('react') };
@@ -385,6 +401,19 @@ async function clickExportTranscript() {
   await act(async () => {});
 }
 
+/** Switch the meeting view's tab the way a user clicks the tab strip. */
+async function switchTab(label: 'Transcript' | 'Summary') {
+  const tab = renderer!.root.findAll(
+    (node: any) => node.type === 'button' && node.props.role === 'tab'
+      && textOf(node).includes(label),
+  )[0];
+  expect(tab).toBeDefined();
+  await act(async () => {
+    tab.props.onMouseDown({ button: 0, ctrlKey: false, ...fakeEvent });
+  });
+  await act(async () => {});
+}
+
 function exportCalls() {
   return callsOf('export_transcript_file_command');
 }
@@ -421,6 +450,8 @@ describe('rename then export through the sidebar (seam #1)', () => {
     await show();
     await renameThroughSidebar('Renamed planning call');
 
+    // Only one panel is mounted at a time; the transcript lives on its tab.
+    await switchTab('Transcript');
     await clickExportTranscript();
 
     expect(exportCalls()).toHaveLength(1);
@@ -482,6 +513,9 @@ describe('rename then export through the sidebar (seam #1)', () => {
     summaryResponse = { ...summaryResponse, status: 'idle', data: null, start: null };
     await show();
 
+    // Without a summary the view stays on the transcript tab; the generate
+    // button lives on the summary tab.
+    await switchTab('Summary');
     await act(async () => { buttonByTitle('Generate AI Summary').props.onClick(fakeEvent); });
     await act(async () => {});
     // The backend finished the run; as `service.rs` does, a generated name is
