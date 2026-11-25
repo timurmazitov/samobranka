@@ -276,18 +276,15 @@ const { SummaryUpdaterButtonGroup } = await import(
 describe('SummaryUpdaterButtonGroup', () => {
   const element = () => (
     <SummaryUpdaterButtonGroup
-      isSaving={false}
-      isDirty={false}
-      onSave={async () => {}}
       onCopy={async () => {}}
       onExport={async () => {}}
     />
   );
 
-  test('labels save, copy and export from the catalogs', async () => {
+  test('labels copy and export from the catalogs', async () => {
     await expectTranslated(
       element,
-      ['common.save', 'common.copy', 'summary.updater.export', 'summary.updater.copyTitle'],
+      ['common.copy', 'summary.updater.export', 'summary.updater.copyTitle'],
       ['Copy Summary', 'Export Summary'],
     );
   });

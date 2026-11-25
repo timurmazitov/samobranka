@@ -40,10 +40,7 @@ interface SummaryPanelProps {
    */
   meetingDate?: string | null;
   meetingTitle: string;
-  isSummaryDirty: boolean;
   summaryRef: RefObject<BlockNoteSummaryViewRef>;
-  isSaving: boolean;
-  onSaveAll: () => Promise<void>;
   onCopySummary: () => Promise<void>;
   onExportSummary: () => Promise<void>;
   aiSummary: MeetingSummary | null;
@@ -85,10 +82,7 @@ export function SummaryPanel({
   meeting,
   meetingDate = null,
   meetingTitle,
-  isSummaryDirty,
   summaryRef,
-  isSaving,
-  onSaveAll,
   onCopySummary,
   onExportSummary,
   aiSummary,
@@ -308,9 +302,6 @@ export function SummaryPanel({
           {hasSummary && !isSummaryLoading && (
             <div className="flex-shrink-0">
               <SummaryUpdaterButtonGroup
-                isSaving={isSaving}
-                isDirty={isSummaryDirty}
-                onSave={onSaveAll}
                 onCopy={onCopySummary}
                 onExport={onExportSummary}
               />
@@ -379,7 +370,22 @@ export function SummaryPanel({
               </h3>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 p-6">
+          <div
+            className="flex-1 overflow-y-auto overflow-x-auto min-h-0 p-6"
+            // Blur autosave (meeting-view-toggle, ticket 03): losing focus
+            // from the editor (a click elsewhere, the tab strip, the window)
+            // persists unsaved edits through the same save chain the removed
+            // Save button used. React's onBlur bubbles (focusout), so the
+            // wrapper catches the contenteditable's blur; the dirty check
+            // keeps the call itself dirty-only and the editor self-guards too.
+            onBlur={() => {
+              const editor = summaryRef.current;
+              if (!editor?.isDirty) return;
+              void editor.saveSummary().catch((error) => {
+                toast.error(t('toasts.meetingData.changesSaveFailed'), { description: String(error) });
+              });
+            }}
+          >
             <BlockNoteSummaryView
               ref={summaryRef}
               summaryData={aiSummary}

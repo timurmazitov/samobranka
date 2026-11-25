@@ -115,10 +115,7 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
   return {
     meeting: { id: 'meeting-a', title: 'Planning call', created_at: '2026-11-18T21:00:00+07:00' },
     meetingTitle: 'Planning call',
-    isSummaryDirty: false,
     summaryRef: { current: null } as any,
-    isSaving: false,
-    onSaveAll: async () => {},
     onCopySummary: async () => {},
     onExportSummary: async () => {},
     aiSummary: null,

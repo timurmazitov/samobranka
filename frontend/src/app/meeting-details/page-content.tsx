@@ -468,6 +468,20 @@ export default function PageContent({
             // The manual choice is remembered globally (one key for all
             // meetings) and restored as the initial tab of any meeting.
             writeMeetingDetailsActiveTab(tab);
+            // Leaving the summary tab unmounts its editor and nulls the ref,
+            // so unsaved edits go through the editor's own save first and the
+            // switch applies only after the save settles — no save-vs-unmount
+            // race. A failed save keeps the editor mounted with its edits
+            // intact and reports the error instead of switching.
+            const summaryEditor = meetingData.blockNoteSummaryRef.current;
+            if (activeTab === 'summary' && tab !== 'summary' && summaryEditor?.isDirty) {
+              void summaryEditor.saveSummary()
+                .then(() => setActiveTab(tab))
+                .catch((error) => {
+                  toast.error(t('toasts.meetingData.changesSaveFailed'), { description: String(error) });
+                });
+              return;
+            }
             setActiveTab(tab);
           }}
           transcript={
@@ -516,9 +530,6 @@ export default function PageContent({
               meetingDate={meeting.recorded_at}
               meetingTitle={meetingData.meetingTitle}
               summaryRef={meetingData.blockNoteSummaryRef}
-              isSaving={meetingData.isSaving}
-              isSummaryDirty={meetingData.isSummaryDirty}
-              onSaveAll={meetingData.saveAllChanges}
               onCopySummary={copyOperations.handleCopySummary}
               onExportSummary={copyOperations.handleExportSummary}
               aiSummary={meetingData.aiSummary}
