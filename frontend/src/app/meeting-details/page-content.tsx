@@ -22,6 +22,7 @@ import { useTranscriptEditSummaryHint } from '@/hooks/meeting-details/useTranscr
 import { useTranscriptSelection } from '@/hooks/meeting-details/useTranscriptSelection';
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
+import { readMeetingDetailsActiveTab, writeMeetingDetailsActiveTab } from '@/lib/meeting-details-preferences';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useRetranscriptionRunning } from '@/hooks/useRetranscriptionRunning';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -119,7 +120,11 @@ export default function PageContent({
   // hover trash closes while it runs, exactly like editing closes for the
   // diarization pass (spec: delete gates = edit gates plus retranscription).
   const isRetranscribing = useRetranscriptionRunning(meeting?.id);
-  const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
+  // The initial tab is the globally remembered manual choice (spec story 6);
+  // with nothing stored the meeting opens on the summary — the product's core
+  // value (spec story 4). A manual choice for this meeting is applied after
+  // mount and wins over both this default and the summary auto-switch.
+  const [activeTab, setActiveTab] = useState<MeetingDetailsTab>(() => readMeetingDetailsActiveTab() ?? 'summary');
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
@@ -460,6 +465,9 @@ export default function PageContent({
           activeTab={activeTab}
           onTabChange={(tab) => {
             manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
+            // The manual choice is remembered globally (one key for all
+            // meetings) and restored as the initial tab of any meeting.
+            writeMeetingDetailsActiveTab(tab);
             setActiveTab(tab);
           }}
           transcript={
