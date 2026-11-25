@@ -123,6 +123,12 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   const [currentBlocks, setCurrentBlocks] = useState<Block[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const isContentLoaded = useRef(false);
+  // Counts user edits so a save that overlapped typing does not clear the
+  // dirty flag for edits it never persisted.
+  const editVersionRef = useRef(0);
+  // The in-flight save, shared by concurrent callers (the blur autosave and
+  // the tab-switch guard can fire for the same click).
+  const inFlightSaveRef = useRef<Promise<void> | null>(null);
 
   // Create BlockNote editor for markdown parsing
   const { i18n } = useTranslation();
@@ -195,6 +201,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   const handleEditorChange = useCallback((blocks: Block[]) => {
     // Only set dirty flag if content has finished loading
     if (isContentLoaded.current) {
+      editVersionRef.current += 1;
       setCurrentBlocks(blocks);
       setIsDirty(true);
     }
@@ -316,33 +323,49 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
 
   const handleSave = useCallback(async () => {
     if (!onSave || !isDirty) return;
+    // A second caller while a save is in flight (the blur autosave and the
+    // tab-switch guard firing for the same click) shares that save instead
+    // of starting a twin one.
+    if (inFlightSaveRef.current) return inFlightSaveRef.current;
 
-    setIsSaving(true);
-    try {
-      console.log('💾 Saving BlockNote content...');
+    const saveVersion = editVersionRef.current;
+    const savePromise = (async () => {
+      setIsSaving(true);
+      try {
+        console.log('💾 Saving BlockNote content...');
 
-      // Generate markdown from current blocks; preserve BlockNote JSON even if markdown conversion fails.
-      const markdownResult = await blocksToMarkdownSafely(editor, currentBlocks, {
-        source: 'BlockNoteSummaryView.handleSave',
-      });
+        // Generate markdown from current blocks; preserve BlockNote JSON even if markdown conversion fails.
+        const markdownResult = await blocksToMarkdownSafely(editor, currentBlocks, {
+          source: 'BlockNoteSummaryView.handleSave',
+        });
 
-      const saveData: { markdown?: string; summary_json?: BlockNoteBlock[] } = {
-        summary_json: currentBlocks as unknown as BlockNoteBlock[]
-      };
+        const saveData: { markdown?: string; summary_json?: BlockNoteBlock[] } = {
+          summary_json: currentBlocks as unknown as BlockNoteBlock[]
+        };
 
-      if (markdownResult.markdown !== undefined) {
-        saveData.markdown = markdownResult.markdown;
+        if (markdownResult.markdown !== undefined) {
+          saveData.markdown = markdownResult.markdown;
+        }
+
+        await onSave(saveData);
+        // Edits made while the save was in flight were not persisted by it:
+        // the editor stays dirty so the next caller saves them.
+        if (editVersionRef.current === saveVersion) {
+          setIsDirty(false);
+        }
+        console.log('✅ Save successful');
+      } catch (error) {
+        console.error('❌ Save failed:', error);
+        throw error;
+      } finally {
+        setIsSaving(false);
+        // No other save can interleave: a new one starts only once this ref
+        // is null, which happens only here.
+        inFlightSaveRef.current = null;
       }
-
-      await onSave(saveData);
-      setIsDirty(false);
-      console.log('✅ Save successful');
-    } catch (error) {
-      console.error('❌ Save failed:', error);
-      throw error;
-    } finally {
-      setIsSaving(false);
-    }
+    })();
+    inFlightSaveRef.current = savePromise;
+    return savePromise;
   }, [onSave, isDirty, currentBlocks, editor]);
 
   // Expose methods to parent via ref
