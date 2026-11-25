@@ -414,16 +414,29 @@ export default function PageContent({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [openFindPanel, closePanel, selection.isSelecting, selection.selectedCount, exitSelection]);
 
+  // The auto-switch to the summary (spec story 5) reacts only to a generation
+  // completing during THIS viewing session: a meeting that already has a
+  // summary restores it asynchronously after mount (idle → completed on load),
+  // and that must not move the tab off the stored/default choice (story 6).
+  // Tracking the previous status tells the generating→completed transition
+  // apart from the initial restore; the per-meeting once-guard and the
+  // manual-choice guard are unchanged.
+  const previousSummaryStatusRef = useRef(summaryGeneration.summaryStatus);
   useEffect(() => {
+    const previousStatus = previousSummaryStatusRef.current;
+    previousSummaryStatusRef.current = summaryGeneration.summaryStatus;
+    const generationCompleted =
+      (previousStatus === 'processing' || previousStatus === 'summarizing' || previousStatus === 'regenerating')
+      && summaryGeneration.summaryStatus === 'completed';
     if (
-      (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
+      generationCompleted
       && !autoSwitchedSummaryMeetingIdsRef.current.has(meeting.id)
       && !manuallySelectedTabMeetingIdsRef.current.has(meeting.id)
     ) {
       autoSwitchedSummaryMeetingIdsRef.current.add(meeting.id);
       setActiveTab('summary');
     }
-  }, [meeting.id, meetingData.aiSummary, summaryGeneration.summaryStatus]);
+  }, [meeting.id, summaryGeneration.summaryStatus]);
 
   // Auto-generate only after the model configuration has settled.
   useEffect(() => {

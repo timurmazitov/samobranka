@@ -237,13 +237,39 @@ describe('meeting tab choice persistence', () => {
     expect(splitViewProps.activeTab).toBe('transcript');
   });
 
+  // Story 6 beats the auto-switch on open: a meeting that ALREADY has a
+  // summary restores it asynchronously after mount, which must not move the
+  // tab off the stored choice — only a generation completing during this
+  // viewing session may (story 5).
+  test('a meeting with an existing summary opens on the stored tab', async () => {
+    stored.set(MEETING_DETAILS_ACTIVE_TAB_KEY, 'transcript');
+    aiSummary = { summary_json: [{ id: 'b1', type: 'paragraph', content: [] }] };
+    summaryStatus = 'completed';
+
+    await show();
+
+    expect(splitViewProps.activeTab).toBe('transcript');
+    // The stored choice is left untouched.
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBe('transcript');
+  });
+
+  test('a meeting with an existing summary and nothing stored opens on the default summary tab', async () => {
+    aiSummary = { summary_json: [{ id: 'b1', type: 'paragraph', content: [] }] };
+    summaryStatus = 'completed';
+
+    await show();
+
+    expect(splitViewProps.activeTab).toBe('summary');
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBeUndefined();
+  });
+
   // The auto-switch on summary completion (spec story 5) is preserved: the
   // globally remembered transcript choice is not a manual choice for THIS
   // meeting, so the tab still moves to the summary when generation finishes —
   // and the automatic move is not persisted as if it were a manual choice.
   test('summary completion auto-switches the tab without overwriting the stored choice', async () => {
     stored.set(MEETING_DETAILS_ACTIVE_TAB_KEY, 'transcript');
-    summaryStatus = 'generating';
+    summaryStatus = 'processing';
     await show();
     expect(splitViewProps.activeTab).toBe('transcript');
 
@@ -267,7 +293,7 @@ describe('meeting tab choice persistence', () => {
   // (and, being applied after mount, the globally remembered mode too).
   test('a manual choice for the meeting is not overridden by summary completion', async () => {
     stored.set(MEETING_DETAILS_ACTIVE_TAB_KEY, 'summary');
-    summaryStatus = 'generating';
+    summaryStatus = 'processing';
     await show();
     await act(async () => { splitViewProps.onTabChange('transcript'); });
     expect(splitViewProps.activeTab).toBe('transcript');
