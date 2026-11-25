@@ -7,6 +7,7 @@ import { EmptyStateSummary } from '@/components/EmptyStateSummary';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
 import { SummaryUpdaterButtonGroup } from './SummaryUpdaterButtonGroup';
+import { usePanelToolbar } from './panel-toolbar';
 import { useEffect, useRef, useState, RefObject } from 'react';
 import { toast } from 'sonner';
 import { Languages, ChevronDown, Search } from 'lucide-react';
@@ -52,11 +53,12 @@ interface SummaryPanelProps {
   onSaveModelConfig: (config?: ModelConfig) => Promise<void>;
   onGenerateSummary: (customPrompt: string) => Promise<void>;
   onStopGeneration: () => void;
+  /**
+   * Page-owned custom-prompt text consumed by Generate/Regenerate. The
+   * editable field lives at the bottom of the transcript panel
+   * (meeting-view-toggle, ticket 06); this panel only reads the value.
+   */
   customPrompt: string;
-  /** Writes the page-owned prompt state; the field lives next to Generate. */
-  onPromptChange: (value: string) => void;
-  /** Keeps the prompt field's "not while recording" guard (meeting page: false). */
-  isRecording?: boolean;
   onSaveSummary: (summary: MeetingSummary) => Promise<void>;
   onSummaryChange: (summary: Summary) => void;
   summaryError: string | null;
@@ -94,8 +96,6 @@ export function SummaryPanel({
   onGenerateSummary,
   onStopGeneration,
   customPrompt,
-  onPromptChange,
-  isRecording = false,
   onSaveSummary,
   onSummaryChange,
   summaryError,
@@ -273,69 +273,64 @@ export function SummaryPanel({
     </Popover>
   );
 
+  // Inside the split view the button row renders in the shared toolbar bar
+  // (next to the «Транспект / Конспект» toggles); standalone it stays here.
+  const buttonRow = (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex-shrink-0 min-w-0">
+        <SummaryGeneratorButtonGroup
+          modelConfig={modelConfig}
+          setModelConfig={setModelConfig}
+          onSaveModelConfig={onSaveModelConfig}
+          onGenerateSummary={onGenerateSummary}
+          onStopGeneration={onStopGeneration}
+          customPrompt={customPrompt}
+          summaryStatus={summaryStatus}
+          availableTemplates={availableTemplates}
+          selectedTemplate={selectedTemplate}
+          onTemplateSelect={onTemplateSelect}
+          hasTranscripts={transcripts.length > 0}
+          hasSummary={hasSummary}
+          isModelConfigLoading={isModelConfigLoading}
+          onOpenModelSettings={onOpenModelSettings}
+          languageSlot={transcripts.length > 0 || hasSummary ? languageSlot : undefined}
+        />
+      </div>
+
+      {hasSummary && !isSummaryLoading && (
+        <div className="flex-shrink-0">
+          <SummaryUpdaterButtonGroup
+            onCopy={onCopySummary}
+            onExport={onExportSummary}
+          />
+        </div>
+      )}
+
+      {onOpenFind && (
+        <div className="flex-shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            className="px-2"
+            onClick={onOpenFind}
+            title={t('findReplace.openSummaryTooltip')}
+            aria-label={t('findReplace.openSummaryTooltip')}
+          >
+            <Search size={18} />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+  const toolbarInBar = usePanelToolbar(buttonRow);
+
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-white overflow-hidden h-full w-full @container">
-      {/* Top-level actions — always visible, same pattern as TranscriptPanel */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center justify-center w-full min-w-0 gap-2 flex-wrap">
-          <div className="flex-shrink-0 min-w-0">
-            <SummaryGeneratorButtonGroup
-              modelConfig={modelConfig}
-              setModelConfig={setModelConfig}
-              onSaveModelConfig={onSaveModelConfig}
-              onGenerateSummary={onGenerateSummary}
-              onStopGeneration={onStopGeneration}
-              customPrompt={customPrompt}
-              summaryStatus={summaryStatus}
-              availableTemplates={availableTemplates}
-              selectedTemplate={selectedTemplate}
-              onTemplateSelect={onTemplateSelect}
-              hasTranscripts={transcripts.length > 0}
-              hasSummary={hasSummary}
-              isModelConfigLoading={isModelConfigLoading}
-              onOpenModelSettings={onOpenModelSettings}
-              languageSlot={transcripts.length > 0 || hasSummary ? languageSlot : undefined}
-            />
-          </div>
-
-          {hasSummary && !isSummaryLoading && (
-            <div className="flex-shrink-0">
-              <SummaryUpdaterButtonGroup
-                onCopy={onCopySummary}
-                onExport={onExportSummary}
-              />
-            </div>
-          )}
-
-          {onOpenFind && (
-            <div className="flex-shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                className="px-2"
-                onClick={onOpenFind}
-                title={t('findReplace.openSummaryTooltip')}
-                aria-label={t('findReplace.openSummaryTooltip')}
-              >
-                <Search size={18} />
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Custom prompt input — moved from the bottom of the transcript
-            panel to sit next to the Generate group that consumes it. The
-            show condition is unchanged: never while recording, and only
-            when the meeting has speech segments. */}
-        {!isRecording && transcripts.length > 0 && (
-          <textarea
-            placeholder={t('summary.promptPlaceholder')}
-            className="mt-3 w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm min-h-[80px] resize-y"
-            value={customPrompt}
-            onChange={(e) => onPromptChange(e.target.value)}
-          />
-        )}
-      </div>
+      {/* Top-level actions — always visible, same pattern as TranscriptPanel.
+          Locally only when no split view captured the buttons. */}
+      {!toolbarInBar && (
+        <div className="p-4 border-b border-gray-200">{buttonRow}</div>
+      )}
 
       {isSummaryLoading ? (
         <div className="flex items-center justify-center flex-1">

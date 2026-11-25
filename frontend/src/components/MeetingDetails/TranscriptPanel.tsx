@@ -4,11 +4,21 @@ import { MeetingSpeaker, Transcript, TranscriptSegmentData } from '@/types';
 import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
+import { usePanelToolbar } from './panel-toolbar';
 import type { Match } from '@/hooks/meeting-details/useFindReplace';
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import '@/i18n';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
+  /**
+   * Page-owned custom-prompt text for summary generation. The editable field
+   * sits at the bottom of this panel (meeting-view-toggle, ticket 06); when
+   * the props are omitted (standalone use) the field is not rendered.
+   */
+  customPrompt?: string;
+  onPromptChange?: (value: string) => void;
   onCopyTranscript: () => void;
   onExportTranscript: () => void;
   onOpenMeetingFolder: () => Promise<void>;
@@ -67,6 +77,8 @@ interface TranscriptPanelProps {
 
 export function TranscriptPanel({
   transcripts,
+  customPrompt,
+  onPromptChange,
   onCopyTranscript,
   onExportTranscript,
   onOpenMeetingFolder,
@@ -120,26 +132,36 @@ export function TranscriptPanel({
     }));
   }, [transcripts, usePagination, segments]);
 
+  const { t } = useTranslation();
+  const toolbar = (
+    <TranscriptButtonGroup
+      transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
+      onCopyTranscript={onCopyTranscript}
+      onExportTranscript={onExportTranscript}
+      onOpenMeetingFolder={onOpenMeetingFolder}
+      meetingId={meetingId}
+      meetingFolderPath={meetingFolderPath}
+      onRefetchTranscripts={onRefetchTranscripts}
+      onOpenFind={onOpenFind}
+      onToggleSelection={onToggleSelection}
+      selectionMode={selectionMode}
+      isRecording={isRecording}
+      isDiarizing={isDiarizing}
+      isRetranscribing={isRetranscribing}
+    />
+  );
+  // Inside the split view the button row renders in the shared toolbar bar
+  // (next to the «Транспект / Конспект» toggles); standalone it stays here.
+  const toolbarInBar = usePanelToolbar(toolbar);
+
   return (
     <div className="flex h-full min-w-0 w-full bg-white flex-col relative @container">
-      {/* Title area */}
-      <div className="p-4 border-b border-gray-200">
-        <TranscriptButtonGroup
-          transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
-          onCopyTranscript={onCopyTranscript}
-          onExportTranscript={onExportTranscript}
-          onOpenMeetingFolder={onOpenMeetingFolder}
-          meetingId={meetingId}
-          meetingFolderPath={meetingFolderPath}
-          onRefetchTranscripts={onRefetchTranscripts}
-          onOpenFind={onOpenFind}
-          onToggleSelection={onToggleSelection}
-          selectionMode={selectionMode}
-          isRecording={isRecording}
-          isDiarizing={isDiarizing}
-          isRetranscribing={isRetranscribing}
-        />
-      </div>
+      {/* Title area — locally only when no split view captured the buttons */}
+      {!toolbarInBar && (
+        <div className="p-4 border-b border-gray-200">
+          {toolbar}
+        </div>
+      )}
 
       {/* Transcript content - use virtualized view for better performance */}
       <div className="flex-1 overflow-hidden pb-4">
@@ -177,6 +199,21 @@ export function TranscriptPanel({
           findActiveIndex={findActiveIndex}
         />
       </div>
+
+      {/* Custom prompt input at the bottom of the transcript section — below
+          the list of lines, hidden in summary mode with the panel itself.
+          The value travels to the summary panel's Generate button through
+          the page state (meeting-view-toggle, ticket 06). */}
+      {customPrompt !== undefined && onPromptChange !== undefined && !isRecording && convertedSegments.length > 0 && (
+        <div className="p-1 border-t border-gray-200">
+          <textarea
+            placeholder={t('summary.promptPlaceholder')}
+            className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm min-h-[80px] resize-y"
+            value={customPrompt}
+            onChange={(e) => onPromptChange!(e.target.value)}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -511,6 +511,8 @@ export default function PageContent({
           transcript={
             <TranscriptPanel
               transcripts={meetingData.transcripts}
+              customPrompt={customPrompt}
+              onPromptChange={setCustomPrompt}
               onCopyTranscript={copyOperations.handleCopyTranscript}
               onExportTranscript={copyOperations.handleExportTranscript}
               onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
@@ -565,8 +567,6 @@ export default function PageContent({
               onGenerateSummary={summaryGeneration.handleGenerateSummary}
               onStopGeneration={summaryGeneration.handleStopGeneration}
               customPrompt={customPrompt}
-              onPromptChange={setCustomPrompt}
-              isRecording={isRecording}
               onSaveSummary={meetingData.handleSaveSummary}
               onSummaryChange={meetingData.handleSummaryChange}
               summaryError={summaryGeneration.summaryError}

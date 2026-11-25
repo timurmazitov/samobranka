@@ -1,14 +1,16 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-// Page-level seam for the custom-prompt move (ticket 04): the prompt text
-// state stays on the meeting page, but the field itself moves from the
-// transcript panel to the summary panel, next to the Generate group that
-// consumes it. The heavy panels and data hooks are stand-ins (the same
-// harness as meeting-details-mode-exclusivity), so the routing is observed
-// through the props each panel stub receives: the summary stub now gets the
-// value and the change handler, the transcript stub gets neither, and the
-// generate consumer is wired exactly as before.
+// Page-level seam for the custom-prompt placement (ticket 06, superseding
+// ticket 04): the prompt text state stays on the meeting page. The editable
+// field lives at the BOTTOM of the transcript panel (visible in transcript
+// mode, gone in summary mode with the panel), while the summary panel keeps
+// receiving the value — its Generate/Regenerate buttons consume it. The
+// heavy panels and data hooks are stand-ins (the same harness as
+// meeting-details-mode-exclusivity), so the routing is observed through the
+// props each panel stub receives: the transcript stub gets the value and the
+// change handler, the summary stub keeps only the value, and the generate
+// consumer is wired exactly as before.
 
 const Container = ({ children }: any) => <div>{children}</div>;
 
@@ -175,48 +177,46 @@ async function show(props: Record<string, unknown> = {}) {
 }
 
 describe('custom prompt field placement on the meeting page', () => {
-  test('the summary panel receives the prompt value and change handler', async () => {
+  test('the transcript panel receives the prompt value and change handler', async () => {
     await show();
 
+    expect(panelProps.customPrompt).toBe('');
+    expect(typeof panelProps.onPromptChange).toBe('function');
+  });
+
+  test('the summary panel keeps the value for Generate but gets no field props', async () => {
+    await show();
+
+    // The summary side still consumes the prompt (Generate/Regenerate), so
+    // the value keeps arriving; the editable field itself lives on the
+    // transcript panel, and the recording guard left with it.
     expect(summaryPanelProps.customPrompt).toBe('');
-    expect(typeof summaryPanelProps.onPromptChange).toBe('function');
+    expect(summaryPanelProps.onPromptChange).toBeUndefined();
+    expect(summaryPanelProps.isRecording).toBeUndefined();
   });
 
-  test('the transcript panel no longer receives the prompt props', async () => {
-    await show();
-
-    expect(panelProps.customPrompt).toBeUndefined();
-    expect(panelProps.onPromptChange).toBeUndefined();
-  });
-
-  test('the summary panel receives the recording flag for the show guard', async () => {
-    await show();
-
-    // The moved field keeps its "not while recording" guard; the meeting
-    // page never records, so the flag arrives as false.
-    expect(summaryPanelProps.isRecording).toBe(false);
-  });
-
-  test('typed text round-trips through the page state to the summary panel', async () => {
+  test('typed text round-trips through the page state to both panels', async () => {
     await show();
 
     await act(async () => {
-      summaryPanelProps.onPromptChange('focus on the decisions');
+      panelProps.onPromptChange('focus on the decisions');
     });
 
+    expect(panelProps.customPrompt).toBe('focus on the decisions');
+    // Generate on the summary side reads the same page-owned state.
     expect(summaryPanelProps.customPrompt).toBe('focus on the decisions');
   });
 
-  test('the generate consumer is wired to the same value and handler as before', async () => {
+  test('the generate consumer is wired to the same value as before', async () => {
     await show();
 
     // The page still hands the summary panel the generation hook's own
     // handler; the panel's Generate/Regenerate buttons consume the prompt
-    // from the same props object the field writes to.
+    // from the page state the transcript panel's field writes to.
     expect(summaryPanelProps.onGenerateSummary).toBe(generateSummary);
 
     await act(async () => {
-      summaryPanelProps.onPromptChange('participants and goals');
+      panelProps.onPromptChange('participants and goals');
     });
     expect(summaryPanelProps.customPrompt).toBe('participants and goals');
     expect(summaryPanelProps.onGenerateSummary).toBe(generateSummary);

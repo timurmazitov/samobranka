@@ -174,7 +174,6 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
     onGenerateSummary: async () => {},
     onStopGeneration: () => {},
     customPrompt: '',
-    onPromptChange: () => {},
     onSaveSummary: async () => {},
     onSummaryChange: () => {},
     summaryError: null,
@@ -223,11 +222,13 @@ function headerRows(instance: ReactTestRenderer, containerClass: string) {
   const root = instance.root.find(
     (node) => typeof node.type === 'string' && node.props.className === containerClass,
   );
+  // Inside the split view the panel's buttons live in the shared toolbar bar
+  // and the panel draws no local header at all — hence no header rows.
   const header = root
     .findAll((node) => typeof node.type === 'string' && node.props.className === 'p-4 border-b border-gray-200')
     .at(0);
-  expect(header).toBeDefined();
-  return (header!.children as any[]).filter((child) => typeof child !== 'string');
+  if (!header) return [];
+  return (header.children as any[]).filter((child) => typeof child !== 'string');
 }
 
 /** The right-aligned date rows currently rendered in a panel header. */

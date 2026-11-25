@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-// The moved custom-prompt field on the real summary panel (ticket 04): the
-// textarea lives in the panel's header, next to the Generate group that
-// consumes it, and keeps its old show condition — never while recording,
-// only when the meeting has speech segments. The transcript panel's own
-// suite-side coverage of the field is gone with the field.
+// The custom-prompt field is GONE from the real summary panel (ticket 06,
+// superseding ticket 04): the editable textarea lives at the bottom of the
+// transcript panel now, while the summary panel keeps only consuming the
+// page-owned value through its Generate/Regenerate buttons. These tests pin
+// the absence — under every condition that used to show the field — so the
+// placement cannot silently regress back into the summary header.
 
 const Container = ({ children }: any) => <div>{children}</div>;
 
@@ -127,7 +128,6 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
     onGenerateSummary: async () => {},
     onStopGeneration: () => {},
     customPrompt: '',
-    onPromptChange: () => {},
     onSaveSummary: async () => {},
     onSummaryChange: () => {},
     summaryError: null,
@@ -172,55 +172,35 @@ async function render(props: Partial<SummaryProps> = {}) {
   return renderer!;
 }
 
-function promptField(instance: ReactTestRenderer) {
+function promptFields(instance: ReactTestRenderer) {
   return instance.root.findAll(
     node => node.type === 'textarea' && node.props.placeholder === PROMPT_PLACEHOLDER,
-  )[0];
-}
-
-/** The header block the Generate group lives in. */
-function header(instance: ReactTestRenderer) {
-  return instance.root.findAll(
-    node => typeof node.type === 'string'
-      && node.type === 'div'
-      && node.props.className === 'p-4 border-b border-gray-200',
-  )[0];
+  );
 }
 
 describe('summary panel custom prompt field', () => {
-  test('the field shows in the header next to the Generate group when segments exist', async () => {
+  test('the field is absent even when the meeting has speech segments', async () => {
     const view = await render();
 
-    const field = promptField(view);
-    expect(field).toBeDefined();
-    // Placement: inside the same header block as the Generate group, not at
-    // the bottom of the panel and not on the transcript side.
-    expect(header(view).findAll(node => node === field)).toHaveLength(1);
+    // Placement lives on the transcript panel now (ticket 06); nothing of
+    // the old summary-side field may survive — no textarea anywhere.
+    expect(promptFields(view)).toHaveLength(0);
   });
 
-  test('the field stays hidden while recording even with segments', async () => {
-    const view = await render({ isRecording: true });
-
-    expect(promptField(view)).toBeUndefined();
-  });
-
-  test('the field stays hidden when the meeting has no speech segments', async () => {
+  test('the field is absent when the meeting has no speech segments', async () => {
     const view = await render({ transcripts: [] });
 
-    expect(promptField(view)).toBeUndefined();
+    expect(promptFields(view)).toHaveLength(0);
   });
 
-  test('the field shows the page-owned value and reports edits', async () => {
-    const onPromptChange = mock((_value: string) => {});
-    const view = await render({ customPrompt: 'participants and goals', onPromptChange });
+  test('the panel still receives the prompt value for Generate', async () => {
+    const view = await render({ customPrompt: 'participants and goals' });
 
-    const field = promptField(view);
-    expect(field.props.value).toBe('participants and goals');
-
-    await act(async () => {
-      field.props.onChange({ target: { value: 'focus on the decisions' } });
-    });
-    expect(onPromptChange).toHaveBeenCalledTimes(1);
-    expect(onPromptChange).toHaveBeenCalledWith('focus on the decisions');
+    // The value prop keeps arriving: the Generate/Regenerate buttons consume
+    // it, the transcript panel's field at the bottom writes it.
+    const generateButton = view.root.findAll(
+      node => typeof node.type === 'string' && node.type === 'button',
+    );
+    expect(generateButton.length).toBeGreaterThan(0);
   });
 });

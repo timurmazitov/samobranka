@@ -255,4 +255,23 @@ describe('MeetingDetailsSplitView', () => {
     expect(storageReads).not.toContain(RATIO_STORAGE_KEY);
     expect(stored.get(RATIO_STORAGE_KEY)).toBe('0.42');
   });
+
+  test('pins the inactive tab wrapper to display none despite its flex class', async () => {
+    const events: string[] = [];
+    const view = await renderSplitView(splitViewElement('transcript', events, () => {}));
+
+    // Radix leaves an EMPTY wrapper div (role=tabpanel, no children) in the
+    // DOM for the inactive tab. Its `flex` class beats the preflight
+    // `[hidden]` rule (zero-specificity :where()), so without the guard the
+    // empty wrapper would take a 50% flex share and halve the active panel.
+    const wrappers = view.root.findAll(
+      (node) => typeof node.type === 'string' && node.props.role === 'tabpanel',
+    );
+    expect(wrappers).toHaveLength(2);
+    for (const wrapper of wrappers) {
+      const classes = String(wrapper.props.className ?? '');
+      expect(classes).toContain('flex');
+      expect(classes).toContain('[&[hidden]]:hidden');
+    }
+  });
 });
