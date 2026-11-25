@@ -177,6 +177,7 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
     onGenerateSummary: async () => {},
     onStopGeneration: () => {},
     customPrompt: '',
+    onPromptChange: () => {},
     onSaveSummary: async () => {},
     onSummaryChange: () => {},
     onDirtyChange: () => {},
@@ -193,8 +194,6 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
 function transcriptProps(overrides: Partial<TranscriptProps> = {}): TranscriptProps {
   return {
     transcripts: [],
-    customPrompt: '',
-    onPromptChange: () => {},
     onCopyTranscript: () => {},
     onExportTranscript: () => {},
     onOpenMeetingFolder: async () => {},

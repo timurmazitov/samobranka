@@ -55,6 +55,10 @@ interface SummaryPanelProps {
   onGenerateSummary: (customPrompt: string) => Promise<void>;
   onStopGeneration: () => void;
   customPrompt: string;
+  /** Writes the page-owned prompt state; the field lives next to Generate. */
+  onPromptChange: (value: string) => void;
+  /** Keeps the prompt field's "not while recording" guard (meeting page: false). */
+  isRecording?: boolean;
   onSaveSummary: (summary: MeetingSummary) => Promise<void>;
   onSummaryChange: (summary: Summary) => void;
   onDirtyChange: (isDirty: boolean) => void;
@@ -96,6 +100,8 @@ export function SummaryPanel({
   onGenerateSummary,
   onStopGeneration,
   customPrompt,
+  onPromptChange,
+  isRecording = false,
   onSaveSummary,
   onSummaryChange,
   onDirtyChange,
@@ -326,6 +332,19 @@ export function SummaryPanel({
             </div>
           )}
         </div>
+
+        {/* Custom prompt input — moved from the bottom of the transcript
+            panel to sit next to the Generate group that consumes it. The
+            show condition is unchanged: never while recording, and only
+            when the meeting has speech segments. */}
+        {!isRecording && transcripts.length > 0 && (
+          <textarea
+            placeholder={t('summary.promptPlaceholder')}
+            className="mt-3 w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm min-h-[80px] resize-y"
+            value={customPrompt}
+            onChange={(e) => onPromptChange(e.target.value)}
+          />
+        )}
       </div>
 
       {isSummaryLoading ? (
