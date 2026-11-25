@@ -1204,10 +1204,8 @@
   },
   "meetingDetails": {
     "split": {
-      "resizeAria": "Изменить размер панелей транскрипции и конспекта",
       "tabTranscript": "Транскрипция",
-      "tabSummary": "Конспект",
-      "valueText": "Панель транскрипции — {{percent}} процентов"
+      "tabSummary": "Конспект"
     }
   },
   "transcription": {

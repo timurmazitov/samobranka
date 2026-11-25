@@ -1172,10 +1172,8 @@
   },
   "meetingDetails": {
     "split": {
-      "resizeAria": "Resize transcript and summary",
       "tabTranscript": "Transcript",
-      "tabSummary": "Summary",
-      "valueText": "Transcript panel {{percent}} percent"
+      "tabSummary": "Summary"
     }
   },
   "transcription": {

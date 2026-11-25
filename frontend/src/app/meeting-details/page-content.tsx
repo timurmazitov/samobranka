@@ -304,7 +304,7 @@ export default function PageContent({
   // and markdown edit the PM doc in one transaction, legacy splices the
   // plain block contents through the existing change callback. Nothing here
   // saves: the editor's own dirty mechanism marks the summary unsaved and
-  // the ordinary save button (saveAllChanges → api_save_meeting_summary)
+  // the ordinary autosave (blur / tab switch → api_save_meeting_summary)
   // persists it, so a replace survives a reload exactly like manual typing.
   const handleSummaryReplace = useCallback(async (edits: SummaryReplaceEdit[]) => {
     return meetingData.blockNoteSummaryRef.current?.replaceSummary(edits) ?? false;
@@ -569,7 +569,6 @@ export default function PageContent({
               isRecording={isRecording}
               onSaveSummary={meetingData.handleSaveSummary}
               onSummaryChange={meetingData.handleSummaryChange}
-              onDirtyChange={meetingData.setIsSummaryDirty}
               summaryError={summaryGeneration.summaryError}
               onRegenerateSummary={summaryGeneration.handleRegenerateSummary}
               getSummaryStatusMessage={summaryGeneration.getSummaryStatusMessage}

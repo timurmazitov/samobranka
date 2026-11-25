@@ -45,7 +45,6 @@ interface BlockNoteSummaryViewProps {
     /** The meeting's own moment (RFC3339), preferred over `created_at`. */
     recorded_at?: string | null;
   };
-  onDirtyChange?: (isDirty: boolean) => void;
   // Find & replace (ticket 04): the panel's match list, filtered to the
   // summary matches by the consumer; `findOpen` gates all highlighting.
   findOpen?: boolean;
@@ -112,7 +111,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   error = null,
   onRegenerateSummary,
   meeting,
-  onDirtyChange,
   findOpen = false,
   findMatches,
   findActiveIndex = -1,
@@ -283,13 +281,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     applyFindHighlights(target, summaryMatches, activePosition);
   }, [findOpen, findMatches, findActiveIndex, format, editor, liveEditorNonce]);
 
-  // Notify parent of dirty state changes
-  useEffect(() => {
-    if (onDirtyChange) {
-      onDirtyChange(isDirty);
-    }
-  }, [isDirty, onDirtyChange]);
-
   // The find panel's summary replacement (ticket 05), exposed through the
   // ref. BlockNote and markdown edit the live PM doc in one transaction —
   // `editor.transact` fires the editor's onChange, which flows into
@@ -303,7 +294,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   // (same verification and atomicity) goes through the existing
   // `onSummaryChange` chain, the block-edit path's own mechanism. No dirty
   // flag is raised there on purpose — the legacy editor has never set it,
-  // and saveAllChanges persists legacy content through the aiSummary branch;
+  // and the legacy content is persisted through the aiSummary change chain;
   // raising the BlockNote dirty flag would misroute the save to the (empty)
   // BlockNote blocks.
   const replaceSummary = useCallback((edits: SummaryReplaceEdit[]): boolean => {

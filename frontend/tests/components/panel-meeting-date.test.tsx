@@ -177,7 +177,6 @@ function summaryProps(overrides: Partial<SummaryProps> = {}): SummaryProps {
     onPromptChange: () => {},
     onSaveSummary: async () => {},
     onSummaryChange: () => {},
-    onDirtyChange: () => {},
     summaryError: null,
     onRegenerateSummary: async () => {},
     getSummaryStatusMessage: () => '',

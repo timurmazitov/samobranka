@@ -3,8 +3,6 @@ import { MeetingSummary, Summary, Transcript } from '@/types';
 import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
-import { toast } from 'sonner';
-import i18n from '@/i18n';
 import { hasVisibleSummaryContent } from '@/lib/summary-content';
 
 interface UseMeetingDataProps {
@@ -19,8 +17,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   const transcripts = meeting.transcripts;
   const [meetingTitle, setMeetingTitle] = useState<string>(meeting.title || '+ New Call');
   const [aiSummary, setAiSummary] = useState<MeetingSummary | null>(summaryData);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSummaryDirty, setIsSummaryDirty] = useState(false);
 
   // Ref for BlockNoteSummaryView
   const blockNoteSummaryRef = useRef<BlockNoteSummaryViewRef>(null);
@@ -66,26 +62,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     });
   }, [meeting.id, meetingTitle]);
 
-  const saveAllChanges = useCallback(async () => {
-    setIsSaving(true);
-    try {
-      // Save BlockNote editor changes if dirty
-      if (blockNoteSummaryRef.current?.isDirty) {
-        console.log('💾 Saving BlockNote editor changes...');
-        await blockNoteSummaryRef.current.saveSummary();
-      } else if (aiSummary) {
-        await handleSaveSummary(aiSummary);
-      }
-
-      toast.success(i18n.t('toasts.meetingData.changesSaved'));
-    } catch (error) {
-      console.error('Failed to save changes:', error);
-      toast.error(i18n.t('toasts.meetingData.changesSaveFailed'), { description: String(error) });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [aiSummary, handleSaveSummary]);
-
   // Update meeting title from external source (e.g., AI summary)
   const updateMeetingTitle = useCallback((newTitle: string) => {
     console.log('📝 Updating meeting title to:', newTitle);
@@ -103,19 +79,15 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     transcripts,
     meetingTitle,
     aiSummary,
-    isSaving,
-    isSummaryDirty,
     blockNoteSummaryRef,
 
     // Setters
     setMeetingTitle,
     setAiSummary,
-    setIsSummaryDirty,
 
     // Handlers
     handleSummaryChange,
     handleSaveSummary,
-    saveAllChanges,
     updateMeetingTitle,
   };
 }

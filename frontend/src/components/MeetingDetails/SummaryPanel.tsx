@@ -59,7 +59,6 @@ interface SummaryPanelProps {
   isRecording?: boolean;
   onSaveSummary: (summary: MeetingSummary) => Promise<void>;
   onSummaryChange: (summary: Summary) => void;
-  onDirtyChange: (isDirty: boolean) => void;
   summaryError: string | null;
   onRegenerateSummary: () => Promise<void>;
   getSummaryStatusMessage: (status: 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error') => string;
@@ -99,7 +98,6 @@ export function SummaryPanel({
   isRecording = false,
   onSaveSummary,
   onSummaryChange,
-  onDirtyChange,
   summaryError,
   onRegenerateSummary,
   getSummaryStatusMessage,
@@ -388,7 +386,6 @@ export function SummaryPanel({
               summaryData={aiSummary}
               onSave={onSaveSummary}
               onSummaryChange={onSummaryChange}
-              onDirtyChange={onDirtyChange}
               findOpen={findOpen}
               findMatches={findMatches}
               findActiveIndex={findActiveIndex}
