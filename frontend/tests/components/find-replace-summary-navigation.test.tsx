@@ -32,6 +32,12 @@ let panelProps: Record<string, any>;
 let summaryPanelProps: Record<string, any>;
 let splitViewProps: Record<string, any>;
 let findPanelProps: Record<string, any>;
+// The page's editor ref, handed to the (stubbed) summary panel: each test
+// installs the editor double the page will find when the tab changes.
+const summaryEditorRef: { current: any } = { current: null };
+// Read through getters so a test can flip them between renders without
+// re-mocking (the tab-persistence suite's pattern).
+let summaryStatus = 'completed';
 
 const AI_SUMMARY = {
   summary_json: [
@@ -93,7 +99,7 @@ function applyMocks() {
       transcripts: [],
       aiSummary: AI_SUMMARY,
       meetingTitle: 'Meeting',
-      blockNoteSummaryRef: { current: null },
+      blockNoteSummaryRef: summaryEditorRef,
       isSaving: false,
       isSummaryDirty: false,
       saveAllChanges: async () => {},
@@ -106,7 +112,7 @@ function applyMocks() {
   }));
   mock.module('../../src/hooks/meeting-details/useSummaryGeneration', () => ({
     useSummaryGeneration: () => ({
-      summaryStatus: 'completed',
+      get summaryStatus() { return summaryStatus; },
       handleRegenerateSummary: async () => {},
       handleGenerateSummary: async () => {},
       handleStopGeneration: async () => {},
@@ -166,6 +172,13 @@ const SEGMENTS = [
 // prop: one searchable block, its concatenated inline text.
 const SUMMARY_BLOCKS = [{ blockId: 'sb1', text: 'alpha in the summary' }];
 
+const MEETING_DETAILS_ACTIVE_TAB_KEY = 'samobranka.meetingDetails.activeTab';
+
+// The tab preference lives in localStorage; bun has no window, so each test
+// gets a fresh Map-backed stand-in (the tab-persistence suite's shim).
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const stored = new Map<string, string>();
+
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   applyMocks();
@@ -173,11 +186,46 @@ beforeEach(() => {
   summaryPanelProps = undefined as any;
   splitViewProps = undefined as any;
   findPanelProps = undefined as any;
+  summaryEditorRef.current = null;
+  summaryStatus = 'completed';
+  stored.clear();
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      matchMedia: () => ({
+        matches: true,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => { stored.set(key, value); },
+        removeItem: (key: string) => { stored.delete(key); },
+      },
+    },
+  });
 });
 afterEach(async () => {
   if (renderer) await act(async () => renderer!.unmount());
   renderer = undefined;
+  if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+  else Reflect.deleteProperty(globalThis, 'window');
 });
+
+/** An editor double matching the BlockNoteSummaryView ref API. */
+function editorStub(overrides: Record<string, unknown> = {}) {
+  return {
+    isDirty: false,
+    saveSummary: mock(async () => {}),
+    getMarkdown: async () => '',
+    replaceSummary: () => false,
+    ...overrides,
+  };
+}
 
 async function show() {
   await act(async () => {
@@ -265,5 +313,60 @@ describe('summary side of the meeting find & replace panel', () => {
     await act(async () => { summaryPanelProps.onOpenFind(); });
     expect(findPanelProps.open).toBe(true);
     expect(findPanelProps.focusTarget).toBe('search');
+  });
+});
+
+describe('find navigation and the summary editor save', () => {
+  // Story 13 for the find panel's path: navigation that leaves the summary
+  // tab goes through the same save-guarded switch as the tab strip, so a
+  // dirty editor is persisted before it unmounts.
+  test('navigating away from a dirty summary saves before the tab switches', async () => {
+    await show();
+    // Nothing stored: the meeting opens on the summary tab.
+    expect(splitViewProps.activeTab).toBe('summary');
+
+    let resolveSave!: () => void;
+    const saveSummary = mock(() => new Promise<void>((resolve) => { resolveSave = resolve; }));
+    summaryEditorRef.current = editorStub({ isDirty: true, saveSummary });
+
+    await act(async () => { panelProps.onOpenFind(); });
+    await setQuery('alpha');
+
+    // The active match is on the transcript side: the save started, but the
+    // tab has NOT moved while it is in flight.
+    expect(saveSummary).toHaveBeenCalledTimes(1);
+    expect(splitViewProps.activeTab).toBe('summary');
+
+    await act(async () => { resolveSave(); });
+
+    expect(splitViewProps.activeTab).toBe('transcript');
+    // Navigation is not a manual tab choice (ticket 02): nothing is persisted.
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBeUndefined();
+  });
+
+  // Navigation is not a manual tab choice, so the summary auto-switch (story
+  // 5) still fires when generation completes later in the session.
+  test('find navigation does not count as a manual tab choice', async () => {
+    summaryStatus = 'processing';
+    await show();
+
+    await act(async () => { panelProps.onOpenFind(); });
+    await setQuery('alpha');
+    // The active match is on the transcript side: the tab followed it.
+    expect(splitViewProps.activeTab).toBe('transcript');
+
+    summaryStatus = 'completed';
+    await act(async () => {
+      renderer!.update(
+        <PageContent
+          meeting={{ id: 'meeting-a', title: 'Meeting', transcripts: [] }}
+          summaryData={AI_SUMMARY}
+          initialSummary={null}
+          segments={SEGMENTS}
+        />,
+      );
+    });
+
+    expect(splitViewProps.activeTab).toBe('summary');
   });
 });

@@ -23,6 +23,7 @@ import { useTranscriptSelection } from '@/hooks/meeting-details/useTranscriptSel
 import { useFindReplace, type SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import type { SummaryReplaceEdit } from '@/lib/summary-find-replace';
 import { readMeetingDetailsActiveTab, writeMeetingDetailsActiveTab } from '@/lib/meeting-details-preferences';
+import { saveSummaryEditorIfDirty } from '@/lib/summary-editor-save';
 import { useDiarizationPassRunning } from '@/hooks/useDiarizationPassRunning';
 import { useRetranscriptionRunning } from '@/hooks/useRetranscriptionRunning';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -343,19 +344,38 @@ export default function PageContent({
     openPanel(options);
   }, [exitSelection, openPanel]);
 
+  // The one save-guarded path for every tab switch (spec story 13): leaving
+  // the summary tab unmounts its editor and nulls the ref, so unsaved edits
+  // go through the editor's own save first and the switch applies only after
+  // the save settles — no save-vs-unmount race. A failed save keeps the
+  // editor mounted with its edits intact and reports the error instead of
+  // switching. Returns whether the switch happened, so the tab strip can
+  // persist the manual choice only for a switch the user actually reached.
+  const requestTabChange = useCallback(async (tab: MeetingDetailsTab): Promise<boolean> => {
+    if (activeTab === 'summary' && tab !== 'summary') {
+      const saved = await saveSummaryEditorIfDirty(meetingData.blockNoteSummaryRef.current);
+      if (!saved) return false;
+    }
+    setActiveTab(tab);
+    return true;
+  }, [activeTab, meetingData.blockNoteSummaryRef]);
+
   // Navigation follows the active match across the split view: a summary
   // match reveals the summary tab, a transcript match the transcript tab.
-  // The tab is only ever moved while the panel is open, and the manual
-  // selection marker (the auto-switch's guard) is set like the tab strip's
-  // own handler does, so the summary auto-switch never fights navigation.
+  // The tab is only ever moved while the panel is open. Navigation is not a
+  // manual tab choice (ticket 02): it writes no preference and sets no
+  // manual-choice mark — but it goes through the same save-guarded switch,
+  // so leaving a dirty summary editor saves before the panel unmounts. The
+  // latest-ref keeps the effect from re-firing on every tab change.
+  const requestTabChangeRef = useRef(requestTabChange);
+  requestTabChangeRef.current = requestTabChange;
   useEffect(() => {
     if (!findReplace.open) return;
     const active = findReplace.activeIndex >= 0
       ? findReplace.matches[findReplace.activeIndex]
       : undefined;
     if (!active) return;
-    manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
-    setActiveTab(active.source === 'summary' ? 'summary' : 'transcript');
+    void requestTabChangeRef.current(active.source === 'summary' ? 'summary' : 'transcript');
   }, [findReplace.open, findReplace.matches, findReplace.activeIndex, meeting.id]);
 
   // Page hotkeys — the meeting page's only document keydown listener. Ctrl/Cmd
@@ -477,25 +497,16 @@ export default function PageContent({
         <MeetingDetailsSplitView
           activeTab={activeTab}
           onTabChange={(tab) => {
-            manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
-            // The manual choice is remembered globally (one key for all
-            // meetings) and restored as the initial tab of any meeting.
-            writeMeetingDetailsActiveTab(tab);
-            // Leaving the summary tab unmounts its editor and nulls the ref,
-            // so unsaved edits go through the editor's own save first and the
-            // switch applies only after the save settles — no save-vs-unmount
-            // race. A failed save keeps the editor mounted with its edits
-            // intact and reports the error instead of switching.
-            const summaryEditor = meetingData.blockNoteSummaryRef.current;
-            if (activeTab === 'summary' && tab !== 'summary' && summaryEditor?.isDirty) {
-              void summaryEditor.saveSummary()
-                .then(() => setActiveTab(tab))
-                .catch((error) => {
-                  toast.error(t('toasts.meetingData.changesSaveFailed'), { description: String(error) });
-                });
-              return;
-            }
-            setActiveTab(tab);
+            void requestTabChange(tab).then((switched) => {
+              if (!switched) return;
+              // The manual choice is remembered globally (one key for all
+              // meetings) and restored as the initial tab of any meeting —
+              // but only once the switch actually happened: a failed
+              // pre-switch save must not persist a tab the user never
+              // reached.
+              manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
+              writeMeetingDetailsActiveTab(tab);
+            });
           }}
           transcript={
             <TranscriptPanel

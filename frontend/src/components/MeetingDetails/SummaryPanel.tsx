@@ -21,6 +21,7 @@ import {
   SummaryLanguageStorage,
 } from '@/lib/summary-language-preferences';
 import { hasVisibleSummaryContent } from '@/lib/summary-content';
+import { saveSummaryEditorIfDirty } from '@/lib/summary-editor-save';
 import { formatMeetingDateTime } from '@/lib/meeting-datetime';
 import { useTranslation } from 'react-i18next';
 import i18n, { type AppLanguageCode } from '@/i18n';
@@ -376,14 +377,10 @@ export function SummaryPanel({
             // from the editor (a click elsewhere, the tab strip, the window)
             // persists unsaved edits through the same save chain the removed
             // Save button used. React's onBlur bubbles (focusout), so the
-            // wrapper catches the contenteditable's blur; the dirty check
-            // keeps the call itself dirty-only and the editor self-guards too.
+            // wrapper catches the contenteditable's blur; the shared helper
+            // keeps the call dirty-only and reports a failed save.
             onBlur={() => {
-              const editor = summaryRef.current;
-              if (!editor?.isDirty) return;
-              void editor.saveSummary().catch((error) => {
-                toast.error(t('toasts.meetingData.changesSaveFailed'), { description: String(error) });
-              });
+              void saveSummaryEditorIfDirty(summaryRef.current);
             }}
           >
             <BlockNoteSummaryView

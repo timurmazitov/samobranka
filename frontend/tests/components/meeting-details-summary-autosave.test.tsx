@@ -271,4 +271,39 @@ describe('summary autosave on tab switch', () => {
     expect(splitViewProps.activeTab).toBe('summary');
     expect(errorNotify).toHaveBeenCalledTimes(1);
   });
+
+  test('the tab choice is persisted only after the pre-switch save succeeds', async () => {
+    await show();
+    expect(splitViewProps.activeTab).toBe('summary');
+
+    let resolveSave!: () => void;
+    const saveSummary = mock(() => new Promise<void>((resolve) => { resolveSave = resolve; }));
+    summaryEditorRef.current = editorStub({ isDirty: true, saveSummary });
+
+    await act(async () => { splitViewProps.onTabChange('transcript'); });
+
+    // The switch is still pending on the save: nothing is persisted yet.
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBeUndefined();
+
+    await act(async () => { resolveSave(); });
+
+    expect(splitViewProps.activeTab).toBe('transcript');
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBe('transcript');
+  });
+
+  test('a failed pre-switch save does not persist the tab choice', async () => {
+    await show();
+    expect(splitViewProps.activeTab).toBe('summary');
+
+    const saveSummary = mock(async () => { throw new Error('disk full'); });
+    summaryEditorRef.current = editorStub({ isDirty: true, saveSummary });
+
+    await act(async () => { splitViewProps.onTabChange('transcript'); });
+    // Flush the rejection through the handler's catch.
+    await act(async () => {});
+
+    // The user never reached the transcript tab: the choice is not persisted.
+    expect(splitViewProps.activeTab).toBe('summary');
+    expect(stored.get(MEETING_DETAILS_ACTIVE_TAB_KEY)).toBeUndefined();
+  });
 });
