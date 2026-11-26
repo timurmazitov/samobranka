@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { contentOffset } from '@/lib/layout-offset';
 import { ReplaceAllPartialFailureError } from '@/hooks/meeting-details/useFindReplace';
 import '@/i18n';
 
@@ -137,7 +138,7 @@ export function FindReplacePanel({
         <div className="fixed top-4 right-0 z-20">
             <div
                 className="pr-4 transition-[margin] duration-300"
-                style={{ marginRight: sidebarCollapsed ? '4rem' : '16rem' }}
+                style={{ marginRight: contentOffset(sidebarCollapsed) }}
             >
                 <div className="w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
                     <div className="mb-2 flex items-center justify-between">
