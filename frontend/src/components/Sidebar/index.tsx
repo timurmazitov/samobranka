@@ -262,6 +262,21 @@ const Sidebar: React.FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                onClick={handleNotesModeClick}
+                className={`p-2 rounded-lg transition-colors duration-150 ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
+                  }`}
+              >
+                <NotebookPen className="w-5 h-5 text-gray-600" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>{t('nav.meetingNotes')}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
                 onClick={handleRecordingToggle}
                 disabled={isRecording}
                 className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
@@ -289,21 +304,6 @@ const Sidebar: React.FC = () => {
             </TooltipTrigger>
             <TooltipContent side="right">
               <p>{t('nav.importAudio')}</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleNotesModeClick}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
-                  }`}
-              >
-                <NotebookPen className="w-5 h-5 text-gray-600" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>{t('nav.meetingNotes')}</p>
             </TooltipContent>
           </Tooltip>
 
@@ -376,14 +376,14 @@ const Sidebar: React.FC = () => {
               <>
                 <div
                   onClick={() => router.push('/')}
-                  className="p-3  text-lg font-semibold items-center hover:bg-gray-100 h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
+                  className="p-3  text-lg items-center hover:bg-gray-100 h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
                 >
                   <Home className="w-4 h-4 mr-2" />
                   <span>{t('nav.home')}</span>
                 </div>
                 <div
                   onClick={handleNotesModeClick}
-                  className={`p-3  text-lg font-semibold items-center h-10   flex mx-3 mt-3 rounded-lg cursor-pointer ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
+                  className={`p-3  text-lg items-center h-10   flex mx-3 mt-3 rounded-lg cursor-pointer ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
                     }`}
                 >
                   <NotebookPen className="w-4 h-4 mr-2" />
