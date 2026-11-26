@@ -74,6 +74,7 @@
     "meetingDateHint": "Leave empty if the meeting date is unknown.",
     "editMeetingAria": "Edit meeting details",
     "deleteMeetingAria": "Delete meeting",
+    "resizeNotesColumn": "Resize notes column",
     "matchPrefix": "Match:",
     "popup": {
       "speakers": "Speakers: {{count}}"

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { usePathname, useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { DEFAULT_NOTES_COLUMN_WIDTH, readNotesColumnWidth } from '@/lib/notes-column-width';
 import type { MeetingSpeaker, SummaryProcessResponse } from '@/types';
 
 
@@ -33,11 +34,7 @@ export interface CurrentMeeting {
  */
 export type ColumnMode = 'notes';
 
-/**
- * Default notes-column width in px. The column becomes user-resizable and
- * the width persisted in a later ticket; until then every launch starts here.
- */
-export const DEFAULT_NOTES_COLUMN_WIDTH = 320;
+export { DEFAULT_NOTES_COLUMN_WIDTH };
 
 // Search result type for transcript search
 interface TranscriptSearchResult {
@@ -60,7 +57,7 @@ interface SidebarContextType {
   isCollapsed: boolean;
   /** Active notes-column mode; the column itself cannot be hidden. */
   columnMode: ColumnMode;
-  /** Notes-column width in px (fixed default until the resize ticket). */
+  /** Notes-column width in px; restored from storage on launch, persisted by the column's resize handle. */
   notesColumnWidth: number;
   setNotesColumnWidth: (width: number) => void;
   doodlePath: string | null;
@@ -113,7 +110,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   // The notes mode is the only column mode; no UI switches it yet.
   const [columnMode] = useState<ColumnMode>('notes');
-  const [notesColumnWidth, setNotesColumnWidth] = useState(DEFAULT_NOTES_COLUMN_WIDTH);
+  // The stored width is read lazily on mount; a missing or corrupted value
+  // falls back to the default inside the reader.
+  const [notesColumnWidth, setNotesColumnWidth] = useState(() => readNotesColumnWidth());
   const [doodlePath, setDoodlePath] = useState<string | null>(null);
   const [doodleDate, setDoodleDate] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
