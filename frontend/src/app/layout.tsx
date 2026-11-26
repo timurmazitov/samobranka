@@ -4,6 +4,7 @@ import './globals.css'
 import { Source_Sans_3 } from 'next/font/google'
 import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
+import NotesColumn from '@/components/NotesColumn'
 import MainContent from '@/components/MainContent'
 import { Toaster, toast } from 'sonner'
 import "sonner/dist/styles.css"
@@ -236,6 +237,7 @@ export default function RootLayout({
                                 ) : (
                                   <div className="flex">
                                     <Sidebar />
+                                    <NotesColumn />
                                     <MainContent>{children}</MainContent>
                                   </div>
                                 )}

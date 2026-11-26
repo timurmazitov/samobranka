@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { usePathname, useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { readNotesColumnWidth } from '@/lib/notes-column-width';
 import type { MeetingSpeaker, SummaryProcessResponse } from '@/types';
 
 
@@ -27,6 +28,12 @@ export interface CurrentMeeting {
   durationSeconds?: number;
 }
 
+/**
+ * What the notes column shows. Only the notes mode exists today; the type is
+ * the extension point for future modes, each with its own column content.
+ */
+export type ColumnMode = 'notes';
+
 // Search result type for transcript search
 interface TranscriptSearchResult {
   id: string;
@@ -46,6 +53,18 @@ interface SidebarContextType {
   setCurrentMeeting: (meeting: CurrentMeeting | null) => void;
   sidebarItems: SidebarItem[];
   isCollapsed: boolean;
+  /** Active notes-column mode; the column itself cannot be hidden. */
+  columnMode: ColumnMode;
+  /** Notes-column width in px; restored from storage on launch, persisted by the column's resize handle. */
+  notesColumnWidth: number;
+  setNotesColumnWidth: (width: number) => void;
+  /**
+   * True while the column's resize handle is dragged. The column and every
+   * offset consumer drop their width/margin transitions for the drag, so the
+   * layout tracks the cursor instead of animating behind it.
+   */
+  isNotesColumnResizing: boolean;
+  setNotesColumnResizing: (resizing: boolean) => void;
   doodlePath: string | null;
   doodleDate: string | null;
   toggleCollapse: () => void;
@@ -94,6 +113,14 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: '+ New Call' });
   const [isCollapsed, setIsCollapsed] = useState(true);
+  // The notes mode is the only column mode; no UI switches it yet.
+  const [columnMode] = useState<ColumnMode>('notes');
+  // The stored width is read lazily on mount; a missing or corrupted value
+  // falls back to the default inside the reader.
+  const [notesColumnWidth, setNotesColumnWidth] = useState(() => readNotesColumnWidth());
+  // Set by the column's resize handle for the duration of a drag; the offset
+  // consumers read it to suspend their transitions while the width moves.
+  const [isNotesColumnResizing, setNotesColumnResizing] = useState(false);
   const [doodlePath, setDoodlePath] = useState<string | null>(null);
   const [doodleDate, setDoodleDate] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
@@ -358,6 +385,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       setCurrentMeeting,
       sidebarItems,
       isCollapsed,
+      columnMode,
+      notesColumnWidth,
+      setNotesColumnWidth,
+      isNotesColumnResizing,
+      setNotesColumnResizing,
       doodlePath,
       doodleDate,
       toggleCollapse,

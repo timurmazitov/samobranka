@@ -84,6 +84,10 @@
       "updateFailed": "Failed to update meeting details"
     }
   },
+  "notesColumn": {
+    "emptyNotes": "No notes",
+    "resizeNotesColumn": "Resize notes column"
+  },
   "about": {
     "title": "About Samobranka",
     "aria": "About Samobranka"

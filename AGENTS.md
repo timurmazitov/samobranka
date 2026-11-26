@@ -80,6 +80,7 @@ See [build and platform setup](docs/BUILDING.md), [development commands and debu
 | audio.cpp diarization model catalog and downloads | [catalog.rs](frontend/src-tauri/src/audio_cpp_engine/catalog.rs), [models.rs](frontend/src-tauri/src/audio_cpp_engine/models.rs), [AudioCppModelManager.tsx](frontend/src/components/AudioCppModelManager.tsx) |
 | Summary providers and orchestration | [summary/](frontend/src-tauri/src/summary/) |
 | Recording UI and shared frontend state | [page.tsx](frontend/src/app/page.tsx), [SidebarProvider.tsx](frontend/src/components/Sidebar/SidebarProvider.tsx), [RecordingStateContext.tsx](frontend/src/contexts/RecordingStateContext.tsx) |
+| Notes column (permanent meeting list between sidebar and content), its width persistence and layout offsets | [NotesColumn/](frontend/src/components/NotesColumn/), [notes-column-width.ts](frontend/src/lib/notes-column-width.ts), [layout-offset.ts](frontend/src/lib/layout-offset.ts), [meeting-route.ts](frontend/src/lib/meeting-route.ts) |
 
 ## Verification and Privacy
 

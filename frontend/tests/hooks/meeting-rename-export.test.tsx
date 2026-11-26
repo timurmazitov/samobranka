@@ -3,14 +3,15 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { SummaryProcessResponse } from '../../src/types';
 
 // Seam #1 of the meeting-title spec: the full meeting route together with the
-// real SidebarProvider, the real sidebar row and its edit dialog, and the real
-// summary/transcript panels and export hooks, all under the mocked Tauri
-// boundary. The user scenario runs end to end — open the meeting, rename it
-// through the row's edit dialog, press Export — and only the externally visible
-// results are asserted: the `defaultFileName` the save dialog was asked for and
-// the document body. Prior art: meeting-details-refresh.test.tsx (route seam),
-// sidebar-meeting-list.test.tsx (real sidebar under mocks),
-// copy-export-operations.test.tsx (export assertions).
+// real SidebarProvider, the real notes column with its meeting row and edit
+// dialog, and the real summary/transcript panels and export hooks, all under
+// the mocked Tauri boundary. The user scenario runs end to end — open the
+// meeting, rename it through the row's edit dialog, press Export — and only
+// the externally visible results are asserted: the `defaultFileName` the save
+// dialog was asked for and the document body. Prior art:
+// meeting-details-refresh.test.tsx (route seam), notes-column.test.tsx (real
+// notes column under mocks), copy-export-operations.test.tsx (export
+// assertions).
 
 // Bun shares module mocks between test files; capture the originals first and
 // restore every mocked application module in `afterAll`.
@@ -235,7 +236,7 @@ const invoke = mock(async (command: string, args?: Record<string, unknown>): Pro
 mock.module('@tauri-apps/api/core', () => ({ ...originalCore, invoke }));
 
 const { SidebarProvider } = await import('../../src/components/Sidebar/SidebarProvider');
-const { default: Sidebar } = await import('../../src/components/Sidebar');
+const { default: NotesColumn } = await import('../../src/components/NotesColumn');
 const { default: MeetingDetails } = await import('../../src/app/meeting-details/page');
 
 let renderer: ReactTestRenderer | undefined;
@@ -326,21 +327,15 @@ async function show() {
   await act(async () => {
     renderer = create(
       <SidebarProvider>
-        <Sidebar />
+        <NotesColumn />
         <MeetingDetails />
       </SidebarProvider>,
     );
   });
   // The provider fetches the meeting rows; the route loads metadata,
-  // transcripts, the speaker list and the stored summary.
+  // transcripts, the speaker list and the stored summary. The notes column is
+  // permanent, so the rows are rendered without any expanding step.
   await act(async () => {});
-  // The sidebar starts collapsed, where the spec keeps the rows unrendered.
-  // Expand it the way a user does, through the floating toggle.
-  const toggle = renderer!.root.findAll(
-    (node: any) => node.type === 'button' && typeof node.props.onClick === 'function'
-      && !node.props['aria-label'] && !node.props.disabled,
-  )[0];
-  await act(async () => { toggle.props.onClick(fakeEvent); });
 }
 
 function textOf(node: any): string {

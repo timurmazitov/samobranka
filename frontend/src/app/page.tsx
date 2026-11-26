@@ -8,6 +8,7 @@ import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateCon
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useConfig } from '@/contexts/ConfigContext';
 import { StatusOverlays } from '@/app/_components/StatusOverlays';
+import { contentOffset } from '@/lib/layout-offset';
 import { SettingsModals } from './_components/SettingsModal';
 import { TranscriptPanel } from './_components/TranscriptPanel';
 import { useModalState } from '@/hooks/useModalState';
@@ -38,7 +39,7 @@ export default function Home() {
 
   // Hooks
   const { hasMicrophone } = usePermissionCheck();
-  const { setIsMeetingActive, isCollapsed: sidebarCollapsed, refetchMeetings } = useSidebar();
+  const { setIsMeetingActive, isCollapsed: sidebarCollapsed, notesColumnWidth, isNotesColumnResizing, refetchMeetings } = useSidebar();
   const { modals, messages, showModal, hideModal } = useModalState();
   const { isRecordingDisabled, setIsRecordingDisabled } = useRecordingStateSync(isRecording, setIsRecordingState, setIsMeetingActive);
   const { handleRecordingStart } = useRecordingStart(isRecording, setIsRecordingState, showModal);
@@ -217,9 +218,9 @@ export default function Home() {
           status !== RecordingStatus.DIARIZING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
-                className="flex justify-center pl-8 transition-[margin] duration-300"
+                className={`flex justify-center pl-8${isNotesColumnResizing ? '' : ' transition-[margin] duration-300'}`}
                 style={{
-                  marginLeft: sidebarCollapsed ? '4rem' : '16rem'
+                  marginLeft: contentOffset(sidebarCollapsed, notesColumnWidth)
                 }}
               >
                 <div className="w-2/3 max-w-[750px] flex justify-center">
@@ -251,6 +252,8 @@ export default function Home() {
           isSaving={status === RecordingStatus.SAVING}
           isDetectingSpeakers={status === RecordingStatus.DIARIZING}
           sidebarCollapsed={sidebarCollapsed}
+          notesColumnWidth={notesColumnWidth}
+          isNotesColumnResizing={isNotesColumnResizing}
         />
       </div>
     </div>
