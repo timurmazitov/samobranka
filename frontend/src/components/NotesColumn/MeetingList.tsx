@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Calendar, ChevronDown, ChevronRight, NotebookPen, SearchIcon, X } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronRight, SearchIcon, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
@@ -23,10 +23,11 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 
 /**
- * The meeting list with its search row, hosted by the permanent notes column.
- * Owns everything the list needs to work on its own: the local search query,
- * the delete/edit modals and their handlers, the active-row highlight and the
- * click routing. Always rendered — the column cannot be hidden.
+ * The meeting list with its search row, hosted by the notes column. Owns
+ * everything the list needs to work on its own: the local search query,
+ * the delete/edit modals and their handlers, the active-row highlight and
+ * the click routing. Rendered by the column, which shows it only on the
+ * notes routes.
  */
 export function MeetingList() {
   const { t } = useTranslation();
@@ -394,22 +395,13 @@ export function MeetingList() {
         </div>
       </div>
 
-      {/* Meeting Notes folder header - fixed */}
-      <div className="flex-shrink-0">
-        {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
-          <div key={item.id}>
-            <div
-              className="flex items-center transition-all duration-150 p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg"
-            >
-              <NotebookPen className="w-4 h-4 mr-2 text-gray-600" />
-              <span className="text-gray-700">{item.title}</span>
-              {searchQuery && item.id === 'meetings' && isSearching && (
-                <span className="ml-2 text-xs text-blue-500 animate-pulse">{t('common.searching')}</span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* The folder's icon/title header is gone; only the search-in-progress
+          hint stays, on the header's old spot above the list. */}
+      {searchQuery && isSearching && (
+        <div className="flex-shrink-0 flex items-center h-10 mx-3 mt-3 px-3">
+          <span className="text-xs text-blue-500 animate-pulse">{t('common.searching')}</span>
+        </div>
+      )}
 
       {/* Scrollable meeting items */}
       <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">

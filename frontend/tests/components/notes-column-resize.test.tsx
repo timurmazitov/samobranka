@@ -1,13 +1,15 @@
 /**
- * Notes-column resize (spec `.scratch/notes-column`, ticket 04): the drag
- * handle on the column's right edge. The real `NotesColumn` is rendered
- * inside the real provider — only the native edge and the chrome around it
- * are replaced — so the observed behavior is the user-visible one: the
- * stored width is restored on launch, dragging the separator moves the
- * column width within the 240–480px bounds, text selection is suspended for
- * the drag, and the final width is persisted on mouseup. The window is an
- * EventTarget here, so the drag's window-level mousemove/mouseup listeners
- * are exercised the way the browser drives them.
+ * Notes-column resize (spec `.scratch/notes-column`, ticket 04 + review
+ * update): the drag handle on the column's right edge. The real `NotesColumn`
+ * is rendered inside the real provider — only the native edge and the chrome
+ * around it are replaced — so the observed behavior is the user-visible one:
+ * the stored width is restored on launch, dragging the separator moves the
+ * column width within the bounds (240px at least, at most half the 1000px
+ * test viewport = 500px), text selection is suspended for the drag, the
+ * final width is persisted on mouseup, and a shrinking window clamps the
+ * width on the fly. The window is an EventTarget here, so the drag's
+ * window-level mousemove/mouseup listeners and the provider's resize
+ * listener are exercised the way the browser drives them.
  */
 
 import React from 'react';
@@ -37,6 +39,10 @@ afterAll(async () => {
 const Container = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
 
 let listRows: unknown[] = [];
+// The notes routes show the column; the resize tests run on a meeting page
+// unless a test points the mock elsewhere.
+let currentPathname = '/meeting-details';
+const VIEWPORT_WIDTH = 1000;
 const invoke = mock(async (command: string): Promise<unknown> => {
   if (command === 'api_get_meetings') return listRows;
   if (command === 'doodle_sync') return null;
@@ -49,7 +55,7 @@ mock.module('@tauri-apps/api/event', () => ({
   emit: async () => { },
 }));
 mock.module('next/navigation', () => ({
-  usePathname: () => '/',
+  usePathname: () => currentPathname,
   useRouter: () => ({ push: () => { }, replace: () => { } }),
 }));
 mock.module('../../src/contexts/RecordingStateContext', () => ({
@@ -93,6 +99,7 @@ afterEach(async () => {
   renderer = undefined;
   invoke.mockClear();
   stored.clear();
+  currentPathname = '/meeting-details';
   if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
   else Reflect.deleteProperty(globalThis, 'document');
   if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
@@ -134,7 +141,7 @@ async function show() {
   });
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: Object.assign(new EventTarget(), { localStorage: localStorageShim }),
+    value: Object.assign(new EventTarget(), { localStorage: localStorageShim, innerWidth: VIEWPORT_WIDTH }),
   });
   await act(async () => {
     renderer = create(<Harness />);
@@ -193,9 +200,10 @@ test('dragging the handle moves the column width within the bounds', async () =>
   // 60px to the right of the drag start widens the 320px column to 380.
   await act(async () => { window.dispatchEvent(mouse('mousemove', 460)); });
   expect(columnWidth(view)).toBe(380);
-  // Far past the bounds the width stops at 480 and 240.
+  // Far past the bounds the width stops at half the 1000px test viewport
+  // (500) and at the 240 minimum.
   await act(async () => { window.dispatchEvent(mouse('mousemove', 900)); });
-  expect(columnWidth(view)).toBe(480);
+  expect(columnWidth(view)).toBe(500);
   await act(async () => { window.dispatchEvent(mouse('mousemove', 100)); });
   expect(columnWidth(view)).toBe(240);
 });
@@ -275,4 +283,47 @@ test('unmounting the column mid-drag ends the drag and restores the page', async
   await act(async () => { window.dispatchEvent(mouse('mouseup', 900)); });
   expect(context.notesColumnWidth).toBe(380);
   expect(stored.get(NOTES_COLUMN_WIDTH_KEY)).toBeUndefined();
+});
+
+// — The viewport cap ---------------------------------------------------------
+
+test('a shrinking window clamps the column width on the fly', async () => {
+  stored.set(NOTES_COLUMN_WIDTH_KEY, '410');
+  const view = await show();
+  expect(columnWidth(view)).toBe(410);
+
+  // The window narrows below the column's width: the column follows it down
+  // to half the new viewport.
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+  await act(async () => { window.dispatchEvent(new Event('resize')); });
+  expect(columnWidth(view)).toBe(350);
+
+  // A wider window never re-grows the column on its own — the user drags it
+  // back out.
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+  await act(async () => { window.dispatchEvent(new Event('resize')); });
+  expect(columnWidth(view)).toBe(350);
+});
+
+// — Route-driven visibility ---------------------------------------------------
+
+test('the content offset spans only the sidebar when the column is hidden by route', async () => {
+  // On the notes routes the offset clears the sidebar and the column.
+  currentPathname = '/meeting-details';
+  let view = await show();
+  expect(view.root.find((node) => node.type === 'main').props.style.marginLeft).toBe('384px');
+  await act(async () => renderer!.unmount());
+  renderer = undefined;
+  invoke.mockClear();
+
+  // Everywhere else (home, settings, feedback, recording) the column is
+  // hidden and the content takes its width.
+  for (const pathname of ['/', '/settings', '/feedback']) {
+    currentPathname = pathname;
+    view = await show();
+    expect(view.root.find((node) => node.type === 'main').props.style.marginLeft).toBe('64px');
+    await act(async () => renderer!.unmount());
+    renderer = undefined;
+    invoke.mockClear();
+  }
 });

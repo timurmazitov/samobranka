@@ -9,23 +9,28 @@ import { clampNotesColumnWidth, writeNotesColumnWidth } from '@/lib/notes-column
 import { MeetingList } from './MeetingList';
 
 /**
- * The permanent column between the sidebar and the content area. It hosts the
- * active column mode's content — today only the notes mode (search row +
- * meeting list); future modes plug into the same switch. The column cannot be
- * hidden: there is no close control, and the sidebar's mode button only
- * navigates. Positioned like the sidebar: fixed, its left edge tracks the
- * sidebar's current width, its own width comes from the provider state.
+ * The column between the sidebar and the content area. It hosts the active
+ * column mode's content — today only the notes mode (search row + meeting
+ * list); future modes plug into the same switch. The column cannot be
+ * closed by a control: it renders only on the notes routes (meeting page,
+ * legacy notes) and stays hidden everywhere else — home, settings, feedback
+ * and during recording — where the content spans its width. Positioned like
+ * the sidebar: fixed, its left edge tracks the sidebar's current width, its
+ * own width comes from the provider state.
  */
 const NotesColumn: React.FC = () => {
   const { t } = useTranslation();
   const {
     isCollapsed,
     columnMode,
+    isNotesColumnVisible,
     notesColumnWidth,
     setNotesColumnWidth,
     isNotesColumnResizing,
     setNotesColumnResizing,
   } = useSidebar();
+
+  if (!isNotesColumnVisible) return null;
 
   // Drag-resize without new dependencies: mousedown on the handle arms
   // window-level mousemove/mouseup listeners, so a fast cursor never loses
@@ -51,6 +56,8 @@ const NotesColumn: React.FC = () => {
     if (body) body.style.userSelect = 'none';
     setNotesColumnResizing(true);
 
+    // The cap is half the viewport, read from the window at each step; it
+    // cannot meaningfully change mid-drag.
     function handleMove(moveEvent: MouseEvent) {
       setNotesColumnWidth(clampNotesColumnWidth(startWidth + moveEvent.clientX - startX));
     }

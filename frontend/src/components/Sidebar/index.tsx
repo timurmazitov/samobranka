@@ -211,8 +211,10 @@ const Sidebar: React.FC = () => {
   }, []);
 
   // The notes-mode button (collapsed icon and expanded nav row) reflects and
-  // drives the display mode, it does not toggle anything: the notes column
-  // cannot be hidden. The mode is active on the notes pages (home, meeting
+  // The notes-mode button (collapsed-panel icon and expanded nav row) reflects
+  // and drives the display mode, it is not a column toggle: the column's
+  // visibility follows the route, and the button only navigates to the
+  // newest meeting. The mode is active on the notes pages (home, meeting
   // page) and inactive elsewhere (settings, feedback).
   const isMeetingRoute = pathname === '/meeting-details' || pathname?.startsWith('/notes');
   const isNotesModeActive = pathname === '/' || isMeetingRoute;
@@ -328,11 +330,13 @@ const Sidebar: React.FC = () => {
 
   return (
     <div className="fixed top-0 left-0 h-screen z-40">
-      {/* Floating collapse button */}
+      {/* Collapse toggle: floats in the screen's bottom-left corner, inside
+          the sidebar's horizontal footprint, so it never covers the notes
+          column. The sidebar's bottom padding keeps its footer clear of
+          the button. */}
       <button
         onClick={toggleCollapse}
-        className="absolute -right-6 top-20 z-50 p-1 bg-white hover:bg-gray-100 rounded-full shadow-lg border"
-        style={{ transform: 'translateX(50%)' }}
+        className="absolute bottom-3 left-3 z-50 p-1 bg-white hover:bg-gray-100 rounded-full shadow-lg border"
       >
         {isCollapsed ? (
           <ChevronRightCircle className="w-6 h-6" />
@@ -342,7 +346,7 @@ const Sidebar: React.FC = () => {
       </button>
 
       <div
-        className={`h-screen bg-white border-r shadow-sm flex flex-col transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'
+        className={`h-screen bg-white border-r shadow-sm flex flex-col transition-all duration-300 pb-12 ${isCollapsed ? 'w-16' : 'w-64'
           }`}
       >
         {/*  Header with traffic light spacing */}

@@ -5,7 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { usePathname, useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
-import { readNotesColumnWidth } from '@/lib/notes-column-width';
+import { maxNotesColumnWidth, readNotesColumnWidth } from '@/lib/notes-column-width';
+import { isNotesColumnRoute } from '@/lib/layout-offset';
 import type { MeetingSpeaker, SummaryProcessResponse } from '@/types';
 
 
@@ -55,6 +56,13 @@ interface SidebarContextType {
   isCollapsed: boolean;
   /** Active notes-column mode; the column itself cannot be hidden. */
   columnMode: ColumnMode;
+  /**
+   * Whether the notes column currently takes layout space. Derived from the
+   * route: the column shows only on the notes routes (meeting page, legacy
+   * notes); on home, settings, feedback and during recording it is hidden
+   * and the content spans the width it would use.
+   */
+  isNotesColumnVisible: boolean;
   /** Notes-column width in px; restored from storage on launch, persisted by the column's resize handle. */
   notesColumnWidth: number;
   setNotesColumnWidth: (width: number) => void;
@@ -141,6 +149,24 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   const pathname = usePathname();
   const router = useRouter();
+
+  // The column takes layout space only on the notes routes; everywhere else
+  // (home, settings, feedback, recording) it is hidden and the content spans
+  // its width. Derived from the route, so it can never disagree with the
+  // address bar.
+  const isNotesColumnVisible = isNotesColumnRoute(pathname);
+
+  // The width cap is half the viewport. When the window shrinks below the
+  // column's current width, the column shrinks with it; a wider window never
+  // re-grows the column on its own — the user drags it back out.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onResize = () => {
+      setNotesColumnWidth(width => Math.min(width, maxNotesColumnWidth(window.innerWidth)));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     const sync = () => {
@@ -386,6 +412,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       sidebarItems,
       isCollapsed,
       columnMode,
+      isNotesColumnVisible,
       notesColumnWidth,
       setNotesColumnWidth,
       isNotesColumnResizing,

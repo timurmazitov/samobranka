@@ -153,6 +153,14 @@ async function expandSidebar(view: ReactTestRenderer) {
   await act(async () => {});
 }
 
+/** All expanded-sidebar «Заметки» nav rows (0 while the panel is collapsed). */
+function notesModeRows(view: ReactTestRenderer) {
+  return view.root.findAll(
+    (node) => node.type === 'div' && typeof node.props.onClick === 'function'
+      && node.findAll((d) => d.type === 'svg' && String(d.props.className).includes('lucide-notebook-pen')).length > 0,
+  );
+}
+
 /** The active-mode class as an exact token (`hover:bg-gray-100` is not it). */
 function hasActiveHighlight(node: any): boolean {
   return String(node.props.className).split(/\s+/).includes('bg-gray-100');
@@ -294,4 +302,22 @@ test('the expanded nav row is not highlighted on settings', async () => {
   await expandSidebar(view);
 
   expect(hasActiveHighlight(notesModeRow(view))).toBe(false);
+});
+
+test('the bottom-left corner toggle expands the sidebar and collapses it back', async () => {
+  currentPathname = '/settings';
+  listRows = [planningCall];
+
+  const view = await show();
+  // Collapsed: no expanded nav row anywhere.
+  expect(notesModeRows(view).length).toBe(0);
+
+  await expandSidebar(view);
+  expect(notesModeRows(view).length).toBe(1);
+
+  // Expanded: the toggle flips to the left chevron and collapses the panel.
+  const collapse = buttonWithIcon(view, 'lucide-circle-chevron-left');
+  await act(async () => { collapse.props.onClick(); });
+  await act(async () => {});
+  expect(notesModeRows(view).length).toBe(0);
 });

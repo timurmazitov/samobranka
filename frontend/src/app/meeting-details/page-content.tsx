@@ -134,7 +134,7 @@ export default function PageContent({
   const autoGenerationStartedMeetingIdRef = useRef<string | null>(null);
 
   // Sidebar context
-  const { serverAddress, isCollapsed, notesColumnWidth, isNotesColumnResizing } = useSidebar();
+  const { serverAddress, isCollapsed, isNotesColumnVisible, notesColumnWidth, isNotesColumnResizing } = useSidebar();
 
   // Get model config from ConfigContext
   const { modelConfig, setModelConfig, isModelConfigLoading } = useConfig();
@@ -610,7 +610,7 @@ export default function PageContent({
         focusTarget={findReplace.focusTarget}
         focusNonce={findReplace.focusNonce}
         sidebarCollapsed={isCollapsed}
-        notesColumnWidth={notesColumnWidth}
+        notesColumnWidth={isNotesColumnVisible ? notesColumnWidth : 0}
         isNotesColumnResizing={isNotesColumnResizing}
       />
     </motion.div>

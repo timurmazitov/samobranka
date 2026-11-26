@@ -20,3 +20,13 @@ export function sidebarWidthPx(sidebarCollapsed: boolean): number {
 export function contentOffset(sidebarCollapsed: boolean, notesColumnWidthPx: number): string {
   return `${sidebarWidthPx(sidebarCollapsed) + notesColumnWidthPx}px`;
 }
+
+/**
+ * The notes column is shown only on the notes routes — the meeting page and
+ * the legacy notes route. Everywhere else (home, settings, feedback) and
+ * during recording (which lives on the home route) the column is hidden and
+ * the content takes the width the column would use.
+ */
+export function isNotesColumnRoute(pathname: string | null): boolean {
+  return pathname === '/meeting-details' || !!pathname && pathname.startsWith('/notes/');
+}

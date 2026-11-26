@@ -7,7 +7,8 @@ import i18n from '../../src/i18n';
 // The real notes column is rendered inside the real provider: only the native
 // edge and the heavy chrome around it are replaced, so the meeting list with
 // its search row, empty state, modals and hover popup is what this suite
-// observes. The column is permanent, so no sidebar expanding is needed.
+// observes. The column renders only on the notes routes, so the mock
+// pathname defaults to a meeting page.
 const originals = await Promise.all(
   [
     '@tauri-apps/api/core',
@@ -29,6 +30,8 @@ afterAll(async () => {
 const Container = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
 
 let listRows: unknown[] = [];
+// The notes routes show the column; the mock defaults to a meeting page.
+let currentPathname = '/meeting-details';
 /** Scripted backend for `api_get_meeting_speakers`; an Error rejects it. */
 let speakerRows: unknown = [];
 const invoke = mock(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
@@ -49,7 +52,7 @@ mock.module('@tauri-apps/api/event', () => ({
   emit: async () => {},
 }));
 mock.module('next/navigation', () => ({
-  usePathname: () => '/',
+  usePathname: () => currentPathname,
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 mock.module('../../src/contexts/RecordingStateContext', () => ({
@@ -89,6 +92,7 @@ afterEach(async () => {
   renderer = undefined;
   invoke.mockClear();
   speakerRows = [];
+  currentPathname = '/meeting-details';
   if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
   else Reflect.deleteProperty(globalThis, 'document');
   if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
@@ -135,6 +139,40 @@ test('the column shows the search row above the meeting list', async () => {
   );
   expect(search).toBeDefined();
   expect(viewTextOf(view)).toContain('Planning call');
+});
+
+// — Route-driven visibility ---------------------------------------------------
+
+test('the column renders only on the notes routes', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  for (const pathname of ['/', '/settings', '/feedback']) {
+    currentPathname = pathname;
+    const view = await show();
+    expect(view.root.findAll((node) => node.type === 'aside').length).toBe(0);
+    expect(viewTextOf(view)).not.toContain('Planning call');
+    await act(async () => renderer!.unmount());
+    renderer = undefined;
+    invoke.mockClear();
+  }
+
+  currentPathname = '/meeting-details';
+  const view = await show();
+  expect(view.root.findAll((node) => node.type === 'aside').length).toBe(1);
+  expect(viewTextOf(view)).toContain('Planning call');
+});
+
+test('the meeting list has no folder icon/title header above it', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  const view = await show();
+
+  // The folder header («Meeting Notes» with the notebook icon) was removed;
+  // only the meeting rows remain above the empty state.
+  expect(viewTextOf(view)).not.toContain('Meeting Notes');
+  expect(view.root.findAll(
+    (node) => node.type === 'svg' && String(node.props.className).includes('lucide-notebook-pen'),
+  ).length).toBe(0);
 });
 
 test('an empty meeting list shows the no-notes placeholder', async () => {

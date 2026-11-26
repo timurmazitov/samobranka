@@ -9,12 +9,12 @@ interface MainContentProps {
 }
 
 const MainContent: React.FC<MainContentProps> = ({ children }) => {
-  const { isCollapsed, notesColumnWidth, isNotesColumnResizing } = useSidebar();
+  const { isCollapsed, isNotesColumnVisible, notesColumnWidth, isNotesColumnResizing } = useSidebar();
 
   return (
     <main
       className={`flex-1 min-w-0 overflow-hidden${isNotesColumnResizing ? '' : ' transition-all duration-300'}`}
-      style={{ marginLeft: contentOffset(isCollapsed, notesColumnWidth) }}
+      style={{ marginLeft: contentOffset(isCollapsed, isNotesColumnVisible ? notesColumnWidth : 0) }}
     >
       <div className="pl-8 min-w-0 w-full max-w-full overflow-hidden">
         {children}
