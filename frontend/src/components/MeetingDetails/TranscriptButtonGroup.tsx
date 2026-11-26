@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
+import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group';
 import { Copy, Download, FolderOpen, RefreshCw, Search, SquareCheck, Users } from 'lucide-react';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { SpeakersPanel } from './SpeakersPanel';
@@ -76,6 +76,83 @@ export function TranscriptButtonGroup({
     <div className="flex flex-wrap items-center gap-2">
       <ButtonGroup>
         <Button
+          size="sm"
+          variant="outline"
+          className="px-2 @[22rem]:px-3"
+          onClick={() => {
+            setShowSpeakersPanel(true);
+          }}
+          title={t('speakers.title')}
+        >
+          <Users size={18} />
+          <span className="hidden @[22rem]:inline">{t('speakers.title')}</span>
+        </Button>
+
+        {onOpenFind && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="px-2 @[22rem]:px-3"
+            onClick={onOpenFind}
+            title={t('findReplace.openTooltip')}
+            aria-label={t('findReplace.openTooltip')}
+          >
+            <Search size={18} />
+            <span className="hidden @[22rem]:inline">{t('findReplace.find')}</span>
+          </Button>
+        )}
+
+        {meetingId && meetingFolderPath && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="px-2 @[22rem]:px-4"
+            onClick={() => {
+              setShowRetranscribeDialog(true);
+            }}
+            title={t('transcript.enhanceTitle')}
+          >
+            <RefreshCw className="@[22rem]:mr-2" size={18} />
+            <span className="hidden @[22rem]:inline">{t('transcript.enhance')}</span>
+          </Button>
+        )}
+
+        <Button
+          size="sm"
+          variant="outline"
+          className="px-2 @[22rem]:px-4"
+          onClick={() => {
+            onOpenMeetingFolder();
+          }}
+          title={t('transcript.openRecordingFolder')}
+        >
+          <FolderOpen className="@[22rem]:mr-2" size={18} />
+          <span className="hidden @[22rem]:inline">{t('transcript.recording')}</span>
+        </Button>
+
+        {/* Bulk selection mode (ticket 02). Same shape as the Find toggle;
+            the mode's gates are single delete's gates (spec), so
+            recording/diarization/retranscription disable it. The active mode
+            reads as a filled button among the group's outline buttons. */}
+        {onToggleSelection && (
+          <Button
+            size="sm"
+            variant={selectionMode ? 'secondary' : 'outline'}
+            className="px-2 @[22rem]:px-3"
+            onClick={onToggleSelection}
+            disabled={isRecording || isDiarizing || isRetranscribing}
+            title={t('transcript.selectModeTooltip')}
+            aria-label={t('transcript.selectModeTooltip')}
+            aria-pressed={selectionMode}
+          >
+            <SquareCheck size={18} />
+            <span className="hidden @[22rem]:inline">{t('transcript.selectMode')}</span>
+          </Button>
+        )}
+
+        <ButtonGroupSeparator />
+
+        <Button
           variant="outline"
           size="sm"
           className="px-2 @[22rem]:px-3"
@@ -102,79 +179,6 @@ export function TranscriptButtonGroup({
           <Download />
           <span className="hidden @[22rem]:inline">{t('transcript.exportButton')}</span>
         </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="px-2 @[22rem]:px-4"
-          onClick={() => {
-            onOpenMeetingFolder();
-          }}
-          title={t('transcript.openRecordingFolder')}
-        >
-          <FolderOpen className="@[22rem]:mr-2" size={18} />
-          <span className="hidden @[22rem]:inline">{t('transcript.recording')}</span>
-        </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="px-2 @[22rem]:px-3"
-          onClick={() => {
-            setShowSpeakersPanel(true);
-          }}
-          title={t('speakers.title')}
-        >
-          <Users size={18} />
-          <span className="hidden @[22rem]:inline">{t('speakers.title')}</span>
-        </Button>
-
-        {meetingId && meetingFolderPath && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="px-2 @[22rem]:px-4"
-            onClick={() => {
-              setShowRetranscribeDialog(true);
-            }}
-            title={t('transcript.enhanceTitle')}
-          >
-            <RefreshCw className="@[22rem]:mr-2" size={18} />
-            <span className="hidden @[22rem]:inline">{t('transcript.enhance')}</span>
-          </Button>
-        )}
-
-        {onOpenFind && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="px-2"
-            onClick={onOpenFind}
-            title={t('findReplace.openTooltip')}
-            aria-label={t('findReplace.openTooltip')}
-          >
-            <Search size={18} />
-          </Button>
-        )}
-
-        {/* Bulk selection mode (ticket 02), next to Find. Same shape as the
-            Find toggle; the mode's gates are single delete's gates (spec), so
-            recording/diarization/retranscription disable it. The active mode
-            reads as a filled button among the group's outline buttons. */}
-        {onToggleSelection && (
-          <Button
-            size="sm"
-            variant={selectionMode ? 'secondary' : 'outline'}
-            className="px-2"
-            onClick={onToggleSelection}
-            disabled={isRecording || isDiarizing || isRetranscribing}
-            title={t('transcript.selectModeTooltip')}
-            aria-label={t('transcript.selectModeTooltip')}
-            aria-pressed={selectionMode}
-          >
-            <SquareCheck size={18} />
-          </Button>
-        )}
       </ButtonGroup>
 
       <SpeakersPanel

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, RefObject } from 'react';
 import { toast } from 'sonner';
 import { Languages, ChevronDown, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { LanguagePickerPopover } from '@/components/LanguagePickerPopover';
 import { useRecentLanguages } from '@/hooks/useRecentLanguages';
@@ -275,6 +276,19 @@ export function SummaryPanel({
 
   // Inside the split view the button row renders in the shared toolbar bar
   // (next to the «Транспект / Конспект» toggles); standalone it stays here.
+  const findButton = onOpenFind ? (
+    <Button
+      size="sm"
+      variant="outline"
+      className="px-2 @[40rem]:px-3"
+      onClick={onOpenFind}
+      title={t('findReplace.openSummaryTooltip')}
+      aria-label={t('findReplace.openSummaryTooltip')}
+    >
+      <Search size={18} />
+      <span className="hidden @[40rem]:inline">{t('findReplace.find')}</span>
+    </Button>
+  ) : undefined;
   const buttonRow = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <div className="flex-shrink-0 min-w-0">
@@ -294,30 +308,17 @@ export function SummaryPanel({
           isModelConfigLoading={isModelConfigLoading}
           onOpenModelSettings={onOpenModelSettings}
           languageSlot={transcripts.length > 0 || hasSummary ? languageSlot : undefined}
+          findSlot={findButton}
         />
       </div>
 
       {hasSummary && !isSummaryLoading && (
-        <div className="flex-shrink-0">
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <Separator orientation="vertical" className="self-stretch" />
           <SummaryUpdaterButtonGroup
             onCopy={onCopySummary}
             onExport={onExportSummary}
           />
-        </div>
-      )}
-
-      {onOpenFind && (
-        <div className="flex-shrink-0">
-          <Button
-            size="sm"
-            variant="outline"
-            className="px-2"
-            onClick={onOpenFind}
-            title={t('findReplace.openSummaryTooltip')}
-            aria-label={t('findReplace.openSummaryTooltip')}
-          >
-            <Search size={18} />
-          </Button>
         </div>
       )}
     </div>

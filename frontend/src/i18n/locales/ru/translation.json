@@ -1080,6 +1080,7 @@
     "deleteSegmentsFailed": "Не удалось удалить речевые сегменты",
     "deleteSegmentsFailedDescription": "Сегменты остались в транскрипции.",
     "selectModeTooltip": "Выделить речевые сегменты",
+    "selectMode": "Выделить",
     "selectSegmentAria": "Выделить речевой сегмент",
     "deleteSelected": "Удалить ({{count}})",
     "deleteSelectedTooltip": "Удалить выбранные речевые сегменты",
@@ -1098,6 +1099,7 @@
   },
   "findReplace": {
     "title": "Найти и заменить",
+    "find": "Найти",
     "openTooltip": "Найти и заменить в транскрипте",
     "searchPlaceholder": "Искать",
     "replacePlaceholder": "Заменить",

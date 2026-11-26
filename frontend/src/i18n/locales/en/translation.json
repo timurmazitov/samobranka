@@ -1055,6 +1055,7 @@
     "deleteSegmentsFailed": "Failed to delete segments",
     "deleteSegmentsFailedDescription": "The segments are still in the transcript.",
     "selectModeTooltip": "Select speech segments",
+    "selectMode": "Select",
     "selectSegmentAria": "Select speech segment",
     "deleteSelected": "Delete ({{count}})",
     "deleteSelectedTooltip": "Delete the selected speech segments",
@@ -1071,6 +1072,7 @@
   },
   "findReplace": {
     "title": "Find and replace",
+    "find": "Find",
     "openTooltip": "Find and replace in transcript",
     "searchPlaceholder": "Search",
     "replacePlaceholder": "Replace",

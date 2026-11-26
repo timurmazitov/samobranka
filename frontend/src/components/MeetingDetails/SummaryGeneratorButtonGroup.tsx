@@ -23,6 +23,8 @@ import '@/i18n';
 
 interface SummaryGeneratorButtonGroupProps {
   languageSlot?: ReactNode;
+  /** The find & replace button, rendered between Generate and the language slot. */
+  findSlot?: ReactNode;
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
   onSaveModelConfig: (config?: ModelConfig) => Promise<void>;
@@ -54,7 +56,8 @@ export function SummaryGeneratorButtonGroup({
   hasSummary = false,
   isModelConfigLoading = false,
   onOpenModelSettings,
-  languageSlot
+  languageSlot,
+  findSlot
 }: SummaryGeneratorButtonGroupProps) {
   const { t } = useTranslation();
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
@@ -77,7 +80,9 @@ export function SummaryGeneratorButtonGroup({
   }, [onOpenModelSettings]);
 
   if (!hasTranscripts) {
-    return null;
+    // Without transcripts the generation controls hide, but the find button
+    // (it searches the summary, not the transcript) stays available.
+    return findSlot ? <ButtonGroup>{findSlot}</ButtonGroup> : null;
   }
 
   const isGenerating = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
@@ -126,6 +131,8 @@ export function SummaryGeneratorButtonGroup({
           )}
         </Button>
       )}
+
+      {findSlot}
 
       {languageSlot}
 
