@@ -74,6 +74,7 @@
     "meetingDateHint": "Оставьте пустым, если дата встречи неизвестна.",
     "editMeetingAria": "Изменить данные встречи",
     "deleteMeetingAria": "Удалить встречу",
+    "resizeNotesColumn": "Изменить ширину колонки заметок",
     "matchPrefix": "Совпадение:",
     "popup": {
       "speakers": "Спикеров: {{count}}"
