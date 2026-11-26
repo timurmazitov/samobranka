@@ -45,6 +45,8 @@ interface FindReplacePanelProps {
     sidebarCollapsed: boolean;
     /** Width of the permanent notes column, compensated together with the sidebar. */
     notesColumnWidth: number;
+    /** Drops the margin transition while the notes column is drag-resized. */
+    isNotesColumnResizing: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ export function FindReplacePanel({
     focusNonce,
     sidebarCollapsed,
     notesColumnWidth,
+    isNotesColumnResizing,
 }: FindReplacePanelProps) {
     const { t } = useTranslation();
     const searchRef = useRef<HTMLInputElement>(null);
@@ -140,7 +143,7 @@ export function FindReplacePanel({
     return (
         <div className="fixed top-4 right-0 z-20">
             <div
-                className="pr-4 transition-[margin] duration-300"
+                className={`pr-4${isNotesColumnResizing ? '' : ' transition-[margin] duration-300'}`}
                 style={{ marginRight: contentOffset(sidebarCollapsed, notesColumnWidth) }}
             >
                 <div className="w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">

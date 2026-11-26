@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useSidebar } from '../Sidebar/SidebarProvider';
@@ -18,39 +18,63 @@ import { MeetingList } from './MeetingList';
  */
 const NotesColumn: React.FC = () => {
   const { t } = useTranslation();
-  const { isCollapsed, columnMode, notesColumnWidth, setNotesColumnWidth } = useSidebar();
+  const {
+    isCollapsed,
+    columnMode,
+    notesColumnWidth,
+    setNotesColumnWidth,
+    isNotesColumnResizing,
+    setNotesColumnResizing,
+  } = useSidebar();
 
   // Drag-resize without new dependencies: mousedown on the handle arms
   // window-level mousemove/mouseup listeners, so a fast cursor never loses
   // the drag. The width is the drag-start width plus the pointer delta —
   // correct whatever the sidebar's current state. Text selection is
   // suspended for the drag, and the final width is persisted on mouseup.
+  // The resizing flag drops the width/margin transitions of the column and
+  // every offset consumer for the drag, so the layout tracks the cursor
+  // instead of animating behind it; mouseup brings the transitions back.
+  // The active drag's teardown lives in a ref so an unmount mid-drag runs it
+  // too: listeners off, text selection back, transitions on.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+
   const handleResizeStart = (event: React.MouseEvent) => {
     event.preventDefault();
+    // A re-entrant mousedown ends the previous drag before starting a new one.
+    dragCleanupRef.current?.();
     const startX = event.clientX;
     const startWidth = notesColumnWidth;
     const body = typeof document !== 'undefined' ? document.body : null;
     const previousUserSelect = body?.style.userSelect ?? '';
     if (body) body.style.userSelect = 'none';
+    setNotesColumnResizing(true);
 
-    const handleMove = (moveEvent: MouseEvent) => {
+    function handleMove(moveEvent: MouseEvent) {
       setNotesColumnWidth(clampNotesColumnWidth(startWidth + moveEvent.clientX - startX));
-    };
-    const handleUp = (upEvent: MouseEvent) => {
+    }
+    function handleUp(upEvent: MouseEvent) {
       const finalWidth = clampNotesColumnWidth(startWidth + upEvent.clientX - startX);
       setNotesColumnWidth(finalWidth);
       writeNotesColumnWidth(finalWidth);
+      cleanup();
+    }
+    function cleanup() {
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
       if (body) body.style.userSelect = previousUserSelect;
-    };
+      setNotesColumnResizing(false);
+      dragCleanupRef.current = null;
+    }
+    dragCleanupRef.current = cleanup;
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
   };
 
   return (
     <aside
-      className="fixed top-0 h-screen z-30 bg-white border-r shadow-sm flex flex-col transition-all duration-300"
+      className={`fixed top-0 h-screen z-30 bg-white border-r shadow-sm flex flex-col${isNotesColumnResizing ? '' : ' transition-all duration-300'}`}
       style={{ left: sidebarWidthPx(isCollapsed), width: notesColumnWidth }}
     >
       {/* Header spacing mirroring the sidebar, so the search row clears the
@@ -60,7 +84,7 @@ const NotesColumn: React.FC = () => {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label={t('sidebar.resizeNotesColumn')}
+        aria-label={t('notesColumn.resizeNotesColumn')}
         onMouseDown={handleResizeStart}
         className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize transition-colors hover:bg-gray-300 active:bg-gray-400"
       />

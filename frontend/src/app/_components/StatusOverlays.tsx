@@ -13,6 +13,7 @@ interface StatusOverlaysProps {
   // Layout
   sidebarCollapsed: boolean;  // For responsive margin calculation
   notesColumnWidth: number;   // Width of the permanent notes column
+  isNotesColumnResizing: boolean; // Drops the margin transition for the drag
 }
 
 // Internal reusable component for individual status overlays
@@ -21,15 +22,16 @@ interface StatusOverlayProps {
   message: string;
   sidebarCollapsed: boolean;
   notesColumnWidth: number;
+  isNotesColumnResizing: boolean;
 }
 
-function StatusOverlay({ show, message, sidebarCollapsed, notesColumnWidth }: StatusOverlayProps) {
+function StatusOverlay({ show, message, sidebarCollapsed, notesColumnWidth, isNotesColumnResizing }: StatusOverlayProps) {
   if (!show) return null;
 
   return (
     <div className="fixed bottom-4 left-0 right-0 z-10">
       <div
-        className="flex justify-center pl-8 transition-[margin] duration-300"
+        className={`flex justify-center pl-8${isNotesColumnResizing ? '' : ' transition-[margin] duration-300'}`}
         style={{
           marginLeft: contentOffset(sidebarCollapsed, notesColumnWidth)
         }}
@@ -51,7 +53,8 @@ export function StatusOverlays({
   isSaving,
   isDetectingSpeakers,
   sidebarCollapsed,
-  notesColumnWidth
+  notesColumnWidth,
+  isNotesColumnResizing
 }: StatusOverlaysProps) {
   const { t } = useTranslation();
 
@@ -63,6 +66,7 @@ export function StatusOverlays({
         message={t('misc.statusOverlays.finalizingTranscription')}
         sidebarCollapsed={sidebarCollapsed}
         notesColumnWidth={notesColumnWidth}
+        isNotesColumnResizing={isNotesColumnResizing}
       />
 
       {/* Saving status overlay - shown while saving transcript to database */}
@@ -71,6 +75,7 @@ export function StatusOverlays({
         message={t('misc.statusOverlays.savingTranscript')}
         sidebarCollapsed={sidebarCollapsed}
         notesColumnWidth={notesColumnWidth}
+        isNotesColumnResizing={isNotesColumnResizing}
       />
 
       {/* Speaker stage - shown after the save while the live diarization pass
@@ -80,6 +85,7 @@ export function StatusOverlays({
         message={t('misc.statusOverlays.detectingSpeakers')}
         sidebarCollapsed={sidebarCollapsed}
         notesColumnWidth={notesColumnWidth}
+        isNotesColumnResizing={isNotesColumnResizing}
       />
     </>
   );

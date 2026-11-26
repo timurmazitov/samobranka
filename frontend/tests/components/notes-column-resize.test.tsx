@@ -73,8 +73,9 @@ mock.module('../../src/components/ui/tooltip', () => ({
 }));
 mock.module('sonner', () => ({ toast: { success: () => { }, error: () => { }, warning: () => { }, info: () => { } } }));
 
-const { SidebarProvider } = await import('../../src/components/Sidebar/SidebarProvider');
+const { SidebarProvider, useSidebar } = await import('../../src/components/Sidebar/SidebarProvider');
 const { default: NotesColumn } = await import('../../src/components/NotesColumn');
+const { default: MainContent } = await import('../../src/components/MainContent');
 
 /** Map-backed localStorage; the component reads and writes through `window`. */
 const stored = new Map<string, string>();
@@ -101,6 +102,25 @@ afterEach(async () => {
 /** The shimmed body's style object; the drag toggles its `userSelect`. */
 let bodyStyle: Record<string, string> = {};
 
+/** Live context snapshot, so the tests observe the provider's state directly. */
+let context = { isNotesColumnResizing: false, notesColumnWidth: 0 };
+const Probe = () => {
+  const { isNotesColumnResizing, notesColumnWidth } = useSidebar();
+  context = { isNotesColumnResizing, notesColumnWidth };
+  return null;
+};
+
+/** Provider + column + one offset consumer, mounted the way the app layout mounts them. */
+function Harness({ columnVisible = true }: { columnVisible?: boolean }) {
+  return (
+    <SidebarProvider>
+      <Probe />
+      {columnVisible ? <NotesColumn /> : null}
+      <MainContent>content</MainContent>
+    </SidebarProvider>
+  );
+}
+
 async function show() {
   // The drag listens on the window, so it must dispatch events; the provider
   // listens on the document, and the drag toggles the body's user-select.
@@ -117,7 +137,7 @@ async function show() {
     value: Object.assign(new EventTarget(), { localStorage: localStorageShim }),
   });
   await act(async () => {
-    renderer = create(<SidebarProvider><NotesColumn /></SidebarProvider>);
+    renderer = create(<Harness />);
   });
   await act(async () => { });
   await act(async () => { });
@@ -206,4 +226,53 @@ test('mouseup persists the final width and ends the drag', async () => {
   // The listeners are gone: further mouse movement changes nothing.
   await act(async () => { window.dispatchEvent(mouse('mousemove', 600)); });
   expect(columnWidth(view)).toBe(370);
+});
+
+test('the column and the content offset drop their transition only while dragging', async () => {
+  const view = await show();
+  const aside = () => view.root.find((node) => node.type === 'aside');
+  const main = () => view.root.find((node) => node.type === 'main');
+
+  // At rest both animate — the sidebar collapse keeps its animation.
+  expect(aside().props.className).toContain('transition-all');
+  expect(main().props.className).toContain('transition-all');
+
+  const handle = resizeHandle(view);
+  await act(async () => { handle.props.onMouseDown(mouseDownAt(400)); });
+  await act(async () => { window.dispatchEvent(mouse('mousemove', 460)); });
+
+  // Mid-drag the width follows the cursor instead of animating behind it.
+  expect(columnWidth(view)).toBe(380);
+  expect(aside().props.className).not.toContain('transition-all');
+  expect(main().props.className).not.toContain('transition-all');
+
+  await act(async () => { window.dispatchEvent(mouse('mouseup', 460)); });
+
+  // The drag is over: the transitions return for the next sidebar collapse.
+  expect(aside().props.className).toContain('transition-all');
+  expect(main().props.className).toContain('transition-all');
+});
+
+test('unmounting the column mid-drag ends the drag and restores the page', async () => {
+  const view = await show();
+  bodyStyle.userSelect = 'text';
+  const handle = resizeHandle(view);
+
+  await act(async () => { handle.props.onMouseDown(mouseDownAt(400)); });
+  await act(async () => { window.dispatchEvent(mouse('mousemove', 460)); });
+  expect(context).toEqual({ isNotesColumnResizing: true, notesColumnWidth: 380 });
+  expect(bodyStyle.userSelect).toBe('none');
+
+  // The column goes away while the mouse is still down: the drag must not
+  // outlive it — selection comes back, transitions come back.
+  await act(async () => { view.update(<Harness columnVisible={false} />); });
+  expect(context.isNotesColumnResizing).toBe(false);
+  expect(bodyStyle.userSelect).toBe('text');
+
+  // The window listeners are gone: moving and releasing the mouse changes
+  // nothing and persists nothing.
+  await act(async () => { window.dispatchEvent(mouse('mousemove', 900)); });
+  await act(async () => { window.dispatchEvent(mouse('mouseup', 900)); });
+  expect(context.notesColumnWidth).toBe(380);
+  expect(stored.get(NOTES_COLUMN_WIDTH_KEY)).toBeUndefined();
 });

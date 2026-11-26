@@ -147,17 +147,13 @@ export function MeetingList() {
         })
         .filter((item): item is SidebarItem => item !== undefined); // Type-safe filter
     }
-  }, [sidebarItems, searchQuery, searchResults, expandedFolders]);
+  }, [sidebarItems, searchQuery, searchResults]);
 
 
   const handleDelete = async (itemId: string) => {
     console.log('Deleting item:', itemId);
-    const payload = {
-      meetingId: itemId
-    };
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('api_delete_meeting', {
         meetingId: itemId,
       });
@@ -419,7 +415,7 @@ export function MeetingList() {
       <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
         {meetings.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-gray-500">
-            {t('sidebar.emptyNotes')}
+            {t('notesColumn.emptyNotes')}
           </div>
         ) : (
           filteredSidebarItems
