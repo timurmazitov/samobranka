@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Settings, ChevronLeftCircle, ChevronRightCircle, StickyNote, Home, Mic, Square, Search, NotebookPen, Upload } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
-import { MeetingList } from '../NotesColumn/MeetingList';
+import { meetingRoute } from '@/lib/meeting-route';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SettingTabs } from '../SettingTabs';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
@@ -27,11 +27,13 @@ const Sidebar: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
   const {
+    setCurrentMeeting,
     isCollapsed,
     doodlePath,
     doodleDate,
     toggleCollapse,
     handleRecordingToggle,
+    meetings,
     serverAddress
   } = useSidebar();
 
@@ -208,11 +210,31 @@ const Sidebar: React.FC = () => {
     };
   }, []);
 
+  // The notes-mode button (collapsed icon and expanded nav row) reflects and
+  // drives the display mode, it does not toggle anything: the notes column
+  // cannot be hidden. The mode is active on the notes pages (home, meeting
+  // page) and inactive elsewhere (settings, feedback).
+  const isMeetingRoute = pathname === '/meeting-details' || pathname?.startsWith('/notes');
+  const isNotesModeActive = pathname === '/' || isMeetingRoute;
+
+  const handleNotesModeClick = () => {
+    // Already looking at a meeting: the mode button is a no-op there, so a
+    // stray click cannot disturb the context.
+    if (isMeetingRoute) return;
+    // Never navigate away from a live recording.
+    if (isRecording) return;
+    // The backend list is newest-first; with no meetings there is nothing to
+    // open and the column shows its empty state.
+    const latest = meetings[0];
+    if (!latest) return;
+    setCurrentMeeting({ id: latest.id, title: latest.title });
+    router.push(meetingRoute(latest.id));
+  };
+
   const renderCollapsedIcons = () => {
     if (!isCollapsed) return null;
 
     const isHomePage = pathname === '/';
-    const isMeetingPage = pathname?.includes('/meeting-details');
     const isSettingsPage = pathname === '/settings';
 
     return (
@@ -271,10 +293,8 @@ const Sidebar: React.FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => {
-                  if (isCollapsed) toggleCollapse();
-                }}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isMeetingPage ? 'bg-gray-100' : 'hover:bg-gray-100'
+                onClick={handleNotesModeClick}
+                className={`p-2 rounded-lg transition-colors duration-150 ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
                   }`}
               >
                 <NotebookPen className="w-5 h-5 text-gray-600" />
@@ -349,21 +369,29 @@ const Sidebar: React.FC = () => {
           {/* Fixed navigation items */}
           <div className="flex-shrink-0">
             {!isCollapsed && (
-              <div
-                onClick={() => router.push('/')}
-                className="p-3  text-lg font-semibold items-center hover:bg-gray-100 h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
-              >
-                <Home className="w-4 h-4 mr-2" />
-                <span>{t('nav.home')}</span>
-              </div>
+              <>
+                <div
+                  onClick={() => router.push('/')}
+                  className="p-3  text-lg font-semibold items-center hover:bg-gray-100 h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  <span>{t('nav.home')}</span>
+                </div>
+                <div
+                  onClick={handleNotesModeClick}
+                  className={`p-3  text-lg font-semibold items-center h-10   flex mx-3 mt-3 rounded-lg cursor-pointer ${isNotesModeActive ? 'bg-gray-100' : 'hover:bg-gray-100'
+                    }`}
+                >
+                  <NotebookPen className="w-4 h-4 mr-2" />
+                  <span>{t('nav.meetingNotes')}</span>
+                </div>
+              </>
             )}
           </div>
 
           {/* Content area */}
           <div className="flex-1 flex flex-col min-h-0">
             {renderCollapsedIcons()}
-            {/* Meeting list with its search row (extracted component) */}
-            <MeetingList />
           </div>
         </div>
 

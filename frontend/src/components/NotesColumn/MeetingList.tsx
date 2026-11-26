@@ -12,6 +12,7 @@ import type { CurrentMeeting, SidebarItem } from '../Sidebar/SidebarProvider';
 import { MeetingFileItem } from '../Sidebar/MeetingFileItem';
 import { ConfirmationModal } from '../ConfirmationModel/confirmation-modal';
 import { fromDateTimeInputValue, toDateTimeInputValue } from '@/lib/meeting-datetime';
+import { meetingRoute } from '@/lib/meeting-route';
 import {
   Dialog,
   DialogContent,
@@ -22,11 +23,10 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 
 /**
- * The meeting list with its search row, extracted from the sidebar so the
- * notes column can host it later. Owns everything the list needs to work on
- * its own: the local search query, the delete/edit modals and their handlers,
- * the active-row highlight and the click routing. The sidebar renders it in
- * the expanded state where the list used to live.
+ * The meeting list with its search row, hosted by the permanent notes column.
+ * Owns everything the list needs to work on its own: the local search query,
+ * the delete/edit modals and their handlers, the active-row highlight and the
+ * click routing. Always rendered — the column cannot be hidden.
  */
 export function MeetingList() {
   const { t } = useTranslation();
@@ -35,7 +35,6 @@ export function MeetingList() {
     currentMeeting,
     setCurrentMeeting,
     sidebarItems,
-    isCollapsed,
     searchTranscripts,
     searchResults,
     isSearching,
@@ -313,8 +312,6 @@ export function MeetingList() {
     const matchingResult = isMeetingItem ? findMatchingSnippet(item.id) : null;
     const hasTranscriptMatch = !!matchingResult;
 
-    if (isCollapsed) return null;
-
     return (
       <div key={item.id}>
         <div
@@ -330,9 +327,7 @@ export function MeetingList() {
               toggleFolder(item.id);
             } else {
               setCurrentMeeting({ id: item.id, title: item.title });
-              const basePath = item.id.startsWith('intro-call') ? '/' :
-                item.id.includes('-') ? `/meeting-details?id=${item.id}` : `/notes/${item.id}`;
-              router.push(basePath);
+              router.push(meetingRoute(item.id));
             }
           }}
         >
@@ -380,60 +375,62 @@ export function MeetingList() {
 
   return (
     <>
-      {!isCollapsed && (
-        <>
-          {/* Search row */}
-          <div className="flex-shrink-0 px-3 mt-1">
-            <div className="relative mb-1">
-              <InputGroup >
-                <InputGroupInput placeholder={t('sidebar.searchPlaceholder')} value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                />
-                <InputGroupAddon>
-                  <SearchIcon />
-                </InputGroupAddon>
-                {searchQuery &&
-                  <InputGroupAddon align={'inline-end'}>
-                    <InputGroupButton
-                      onClick={() => handleSearchChange('')}
-                    >
-                      <X />
-                    </InputGroupButton>
-                  </InputGroupAddon>
-                }
-              </InputGroup>
+      {/* Search row */}
+      <div className="flex-shrink-0 px-3 mt-1">
+        <div className="relative mb-1">
+          <InputGroup >
+            <InputGroupInput placeholder={t('sidebar.searchPlaceholder')} value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+            />
+            <InputGroupAddon>
+              <SearchIcon />
+            </InputGroupAddon>
+            {searchQuery &&
+              <InputGroupAddon align={'inline-end'}>
+                <InputGroupButton
+                  onClick={() => handleSearchChange('')}
+                >
+                  <X />
+                </InputGroupButton>
+              </InputGroupAddon>
+            }
+          </InputGroup>
+        </div>
+      </div>
+
+      {/* Meeting Notes folder header - fixed */}
+      <div className="flex-shrink-0">
+        {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
+          <div key={item.id}>
+            <div
+              className="flex items-center transition-all duration-150 p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg"
+            >
+              <NotebookPen className="w-4 h-4 mr-2 text-gray-600" />
+              <span className="text-gray-700">{item.title}</span>
+              {searchQuery && item.id === 'meetings' && isSearching && (
+                <span className="ml-2 text-xs text-blue-500 animate-pulse">{t('common.searching')}</span>
+              )}
             </div>
           </div>
+        ))}
+      </div>
 
-          {/* Meeting Notes folder header - fixed */}
-          <div className="flex-shrink-0">
-            {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
-              <div key={item.id}>
-                <div
-                  className="flex items-center transition-all duration-150 p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg"
-                >
-                  <NotebookPen className="w-4 h-4 mr-2 text-gray-600" />
-                  <span className="text-gray-700">{item.title}</span>
-                  {searchQuery && item.id === 'meetings' && isSearching && (
-                    <span className="ml-2 text-xs text-blue-500 animate-pulse">{t('common.searching')}</span>
-                  )}
-                </div>
+      {/* Scrollable meeting items */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+        {meetings.length === 0 ? (
+          <div className="px-3 py-8 text-center text-sm text-gray-500">
+            {t('sidebar.emptyNotes')}
+          </div>
+        ) : (
+          filteredSidebarItems
+            .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
+            .map(item => (
+              <div key={`${item.id}-children`} className="mx-3">
+                {item.children!.map(child => renderItem(child, 1))}
               </div>
-            ))}
-          </div>
-
-          {/* Scrollable meeting items */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
-            {filteredSidebarItems
-              .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
-              .map(item => (
-                <div key={`${item.id}-children`} className="mx-3">
-                  {item.children!.map(child => renderItem(child, 1))}
-                </div>
-              ))}
-          </div>
-        </>
-      )}
+            ))
+        )}
+      </div>
 
       {/* Confirmation Modal for Delete */}
       <ConfirmationModal

@@ -12,6 +12,7 @@ interface StatusOverlaysProps {
 
   // Layout
   sidebarCollapsed: boolean;  // For responsive margin calculation
+  notesColumnWidth: number;   // Width of the permanent notes column
 }
 
 // Internal reusable component for individual status overlays
@@ -19,9 +20,10 @@ interface StatusOverlayProps {
   show: boolean;
   message: string;
   sidebarCollapsed: boolean;
+  notesColumnWidth: number;
 }
 
-function StatusOverlay({ show, message, sidebarCollapsed }: StatusOverlayProps) {
+function StatusOverlay({ show, message, sidebarCollapsed, notesColumnWidth }: StatusOverlayProps) {
   if (!show) return null;
 
   return (
@@ -29,7 +31,7 @@ function StatusOverlay({ show, message, sidebarCollapsed }: StatusOverlayProps) 
       <div
         className="flex justify-center pl-8 transition-[margin] duration-300"
         style={{
-          marginLeft: contentOffset(sidebarCollapsed)
+          marginLeft: contentOffset(sidebarCollapsed, notesColumnWidth)
         }}
       >
         <div className="w-2/3 max-w-[750px] flex justify-center">
@@ -48,7 +50,8 @@ export function StatusOverlays({
   isProcessing,
   isSaving,
   isDetectingSpeakers,
-  sidebarCollapsed
+  sidebarCollapsed,
+  notesColumnWidth
 }: StatusOverlaysProps) {
   const { t } = useTranslation();
 
@@ -59,6 +62,7 @@ export function StatusOverlays({
         show={isProcessing}
         message={t('misc.statusOverlays.finalizingTranscription')}
         sidebarCollapsed={sidebarCollapsed}
+        notesColumnWidth={notesColumnWidth}
       />
 
       {/* Saving status overlay - shown while saving transcript to database */}
@@ -66,6 +70,7 @@ export function StatusOverlays({
         show={isSaving}
         message={t('misc.statusOverlays.savingTranscript')}
         sidebarCollapsed={sidebarCollapsed}
+        notesColumnWidth={notesColumnWidth}
       />
 
       {/* Speaker stage - shown after the save while the live diarization pass
@@ -74,6 +79,7 @@ export function StatusOverlays({
         show={isDetectingSpeakers === true}
         message={t('misc.statusOverlays.detectingSpeakers')}
         sidebarCollapsed={sidebarCollapsed}
+        notesColumnWidth={notesColumnWidth}
       />
     </>
   );

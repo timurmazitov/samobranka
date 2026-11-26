@@ -4,8 +4,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import i18n from '../../src/i18n';
 
-// The real sidebar is rendered: only the native edge and the heavy chrome
-// around it are replaced, so the meeting row is what this suite observes.
+// The real notes column is rendered inside the real provider: only the native
+// edge and the heavy chrome around it are replaced, so the meeting list with
+// its search row, empty state, modals and hover popup is what this suite
+// observes. The column is permanent, so no sidebar expanding is needed.
 const originals = await Promise.all(
   [
     '@tauri-apps/api/core',
@@ -32,8 +34,7 @@ let speakerRows: unknown = [];
 const invoke = mock(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
   if (command === 'api_get_meetings') return listRows;
   if (command === 'doodle_sync') return null;
-  if (command === 'api_get_model_config') return null;
-  if (command === 'api_get_transcript_config') return null;
+  if (command === 'api_search_transcripts') return [];
   if (command === 'api_get_meeting_speakers') {
     if (speakerRows instanceof Error) throw speakerRows;
     return speakerRows;
@@ -41,8 +42,8 @@ const invoke = mock(async (command: string, args?: Record<string, unknown>): Pro
   throw new Error(`Unexpected command: ${command}`);
 });
 mock.module('@tauri-apps/api/core', () => ({ invoke, convertFileSrc: (path: string) => path }));
-// The sidebar subscribes to model-config updates on mount; the subscription
-// itself is irrelevant here, only the meeting rows matter.
+// The provider subscribes to native events on mount; the subscription itself
+// is irrelevant here, only the meeting rows matter.
 mock.module('@tauri-apps/api/event', () => ({
   listen: async () => () => {},
   emit: async () => {},
@@ -78,7 +79,7 @@ mock.module('../../src/components/Logo', () => ({ default: () => null }));
 mock.module('sonner', () => ({ toast: { success: () => {}, error: () => {}, warning: () => {}, info: () => {} } }));
 
 const { SidebarProvider } = await import('../../src/components/Sidebar/SidebarProvider');
-const { default: Sidebar } = await import('../../src/components/Sidebar');
+const { default: NotesColumn } = await import('../../src/components/NotesColumn');
 
 let renderer: ReactTestRenderer | undefined;
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -104,18 +105,11 @@ async function show() {
   });
   Object.defineProperty(globalThis, 'window', { configurable: true, value: globalThis });
   await act(async () => {
-    renderer = create(<SidebarProvider><Sidebar /></SidebarProvider>);
+    renderer = create(<SidebarProvider><NotesColumn /></SidebarProvider>);
   });
   // The provider expands the Meeting Notes folder and fetches its rows.
   await act(async () => {});
   await act(async () => {});
-  // The sidebar starts collapsed, where the spec keeps the rows unrendered.
-  // Expand it the way a user does, through the floating toggle.
-  const toggle = renderer!.root.findAll(
-    (node) => node.type === 'button' && typeof node.props.onClick === 'function'
-      && !node.props['aria-label'] && !node.props.disabled,
-  )[0];
-  await act(async () => toggle.props.onClick());
   return renderer!;
 }
 
@@ -130,6 +124,38 @@ function textOf(node: any): string {
 function viewTextOf(instance: ReactTestRenderer): string {
   return textOf(instance.toJSON());
 }
+
+test('the column shows the search row above the meeting list', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  const view = await show();
+
+  const search = view.root.find(
+    (node) => node.type === 'input' && node.props.placeholder === 'Search meeting content...',
+  );
+  expect(search).toBeDefined();
+  expect(viewTextOf(view)).toContain('Planning call');
+});
+
+test('an empty meeting list shows the no-notes placeholder', async () => {
+  listRows = [];
+
+  const view = await show();
+
+  expect(viewTextOf(view)).toContain('No notes');
+});
+
+test('the empty placeholder follows the Russian interface', async () => {
+  listRows = [];
+
+  await act(async () => { await i18n.changeLanguage('ru'); });
+  try {
+    const view = await show();
+    expect(viewTextOf(view)).toContain('Нет заметок');
+  } finally {
+    await act(async () => { await i18n.changeLanguage('en'); });
+  }
+});
 
 test('a listed recording shows its date and length under the title', async () => {
   listRows = [{
@@ -153,6 +179,59 @@ test('a meeting with neither value shows no second line', async () => {
 
   expect(viewTextOf(view)).toContain('Old call');
   expect(viewTextOf(view)).not.toContain('·');
+});
+
+test('the clicked row becomes the highlighted active meeting', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  const view = await show();
+  const row = view.root.findAll(
+    (node) => node.type === 'div' && typeof node.props.onClick === 'function'
+      && String(node.props.className).includes('cursor-pointer')
+      && textOf(node).includes('Planning call'),
+  )[0];
+  await act(async () => { row.props.onClick(); });
+
+  const active = view.root.findAll(
+    (node) => typeof node.props.className === 'string'
+      && node.props.className.includes('bg-blue-100')
+      && textOf(node).includes('Planning call'),
+  );
+  expect(active.length).toBeGreaterThanOrEqual(1);
+});
+
+// — The row modals ------------------------------------------------------------
+
+/** React synthetic-event stand-in: the row buttons only call `stopPropagation`. */
+const fakeEvent = { stopPropagation: () => {}, preventDefault: () => {} };
+
+test('the row edit button opens the edit dialog with the current title', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  const view = await show();
+  const editButton = view.root.find(
+    (node) => node.type === 'button' && node.props['aria-label'] === 'Edit meeting details',
+  );
+  await act(async () => { editButton.props.onClick(fakeEvent); });
+
+  const titleInput = view.root.find(
+    (node) => node.type === 'input' && node.props.id === 'meeting-title',
+  );
+  expect(titleInput.props.value).toBe('Planning call');
+});
+
+test('the row delete button opens the delete confirmation', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  const view = await show();
+  expect(viewTextOf(view)).not.toContain('Are you sure you want to delete this meeting?');
+
+  const deleteButton = view.root.find(
+    (node) => node.type === 'button' && node.props['aria-label'] === 'Delete meeting',
+  );
+  await act(async () => { deleteButton.props.onClick(fakeEvent); });
+
+  expect(viewTextOf(view)).toContain('Are you sure you want to delete this meeting?');
 });
 
 // — The hover popup ---------------------------------------------------------
@@ -231,16 +310,17 @@ test('a row that leaves the list and comes back asks for its speakers no further
   await hover(view, 'Planning call');
   expect(speakerRequests()).toBe(1);
 
-  // Collapsing and re-expanding the sidebar is how a row leaves the list and
-  // re-enters it while the sidebar session lives on; the count is cached
-  // above the row, so the remounted row does not reach the backend again.
-  const toggle = view.root.findAll(
-    (node) => node.type === 'button' && typeof node.props.onClick === 'function'
-      && !node.props['aria-label'] && !node.props.disabled,
-  )[0];
-  await act(async () => toggle.props.onClick());
+  // A search for something else filters the row out of the list; clearing the
+  // search brings it back while the column session lives on. The count is
+  // cached above the row, so the remounted row does not reach the backend
+  // again.
+  const search = view.root.find(
+    (node) => node.type === 'input' && node.props.placeholder === 'Search meeting content...',
+  );
+  await act(async () => { search.props.onChange({ target: { value: 'nothing matches this' } }); });
   await act(async () => {});
-  await act(async () => toggle.props.onClick());
+  expect(viewTextOf(view)).not.toContain('Planning call');
+  await act(async () => { search.props.onChange({ target: { value: '' } }); });
   await act(async () => {});
 
   await hover(view, 'Planning call');

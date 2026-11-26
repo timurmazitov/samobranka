@@ -27,6 +27,18 @@ export interface CurrentMeeting {
   durationSeconds?: number;
 }
 
+/**
+ * What the notes column shows. Only the notes mode exists today; the type is
+ * the extension point for future modes, each with its own column content.
+ */
+export type ColumnMode = 'notes';
+
+/**
+ * Default notes-column width in px. The column becomes user-resizable and
+ * the width persisted in a later ticket; until then every launch starts here.
+ */
+export const DEFAULT_NOTES_COLUMN_WIDTH = 320;
+
 // Search result type for transcript search
 interface TranscriptSearchResult {
   id: string;
@@ -46,6 +58,11 @@ interface SidebarContextType {
   setCurrentMeeting: (meeting: CurrentMeeting | null) => void;
   sidebarItems: SidebarItem[];
   isCollapsed: boolean;
+  /** Active notes-column mode; the column itself cannot be hidden. */
+  columnMode: ColumnMode;
+  /** Notes-column width in px (fixed default until the resize ticket). */
+  notesColumnWidth: number;
+  setNotesColumnWidth: (width: number) => void;
   doodlePath: string | null;
   doodleDate: string | null;
   toggleCollapse: () => void;
@@ -94,6 +111,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: '+ New Call' });
   const [isCollapsed, setIsCollapsed] = useState(true);
+  // The notes mode is the only column mode; no UI switches it yet.
+  const [columnMode] = useState<ColumnMode>('notes');
+  const [notesColumnWidth, setNotesColumnWidth] = useState(DEFAULT_NOTES_COLUMN_WIDTH);
   const [doodlePath, setDoodlePath] = useState<string | null>(null);
   const [doodleDate, setDoodleDate] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
@@ -358,6 +378,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       setCurrentMeeting,
       sidebarItems,
       isCollapsed,
+      columnMode,
+      notesColumnWidth,
+      setNotesColumnWidth,
       doodlePath,
       doodleDate,
       toggleCollapse,

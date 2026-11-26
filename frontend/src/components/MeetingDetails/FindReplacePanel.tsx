@@ -43,6 +43,8 @@ interface FindReplacePanelProps {
     focusNonce: number;
     /** Sidebar width compensation, same pattern as the status overlays. */
     sidebarCollapsed: boolean;
+    /** Width of the permanent notes column, compensated together with the sidebar. */
+    notesColumnWidth: number;
 }
 
 /**
@@ -77,6 +79,7 @@ export function FindReplacePanel({
     focusTarget,
     focusNonce,
     sidebarCollapsed,
+    notesColumnWidth,
 }: FindReplacePanelProps) {
     const { t } = useTranslation();
     const searchRef = useRef<HTMLInputElement>(null);
@@ -138,7 +141,7 @@ export function FindReplacePanel({
         <div className="fixed top-4 right-0 z-20">
             <div
                 className="pr-4 transition-[margin] duration-300"
-                style={{ marginRight: contentOffset(sidebarCollapsed) }}
+                style={{ marginRight: contentOffset(sidebarCollapsed, notesColumnWidth) }}
             >
                 <div className="w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
                     <div className="mb-2 flex items-center justify-between">
