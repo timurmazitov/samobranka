@@ -62,6 +62,7 @@
   },
   "sidebar": {
     "searchPlaceholder": "Поиск...",
+    "emptyNotes": "Нет заметок",
     "deleteConfirm": "Удалить встречу? Это действие нельзя отменить.",
     "meetingDeleted": "Встреча удалена",
     "meetingDeletedDescription": "Все связанные данные удалены",
