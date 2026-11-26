@@ -62,7 +62,6 @@
   },
   "sidebar": {
     "searchPlaceholder": "Поиск...",
-    "emptyNotes": "Нет заметок",
     "deleteConfirm": "Удалить встречу? Это действие нельзя отменить.",
     "meetingDeleted": "Встреча удалена",
     "meetingDeletedDescription": "Все связанные данные удалены",
@@ -74,7 +73,6 @@
     "meetingDateHint": "Оставьте пустым, если дата встречи неизвестна.",
     "editMeetingAria": "Изменить данные встречи",
     "deleteMeetingAria": "Удалить встречу",
-    "resizeNotesColumn": "Изменить ширину колонки заметок",
     "matchPrefix": "Совпадение:",
     "popup": {
       "speakers": "Спикеров: {{count}}"
@@ -85,6 +83,10 @@
       "invalidDateTime": "Укажите корректные дату и время",
       "updateFailed": "Не удалось обновить данные встречи"
     }
+  },
+  "notesColumn": {
+    "emptyNotes": "Нет заметок",
+    "resizeNotesColumn": "Изменить ширину колонки заметок"
   },
   "about": {
     "title": "О Самобранке",

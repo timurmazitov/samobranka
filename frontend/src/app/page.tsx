@@ -39,7 +39,7 @@ export default function Home() {
 
   // Hooks
   const { hasMicrophone } = usePermissionCheck();
-  const { setIsMeetingActive, isCollapsed: sidebarCollapsed, notesColumnWidth, refetchMeetings } = useSidebar();
+  const { setIsMeetingActive, isCollapsed: sidebarCollapsed, notesColumnWidth, isNotesColumnResizing, refetchMeetings } = useSidebar();
   const { modals, messages, showModal, hideModal } = useModalState();
   const { isRecordingDisabled, setIsRecordingDisabled } = useRecordingStateSync(isRecording, setIsRecordingState, setIsMeetingActive);
   const { handleRecordingStart } = useRecordingStart(isRecording, setIsRecordingState, showModal);
@@ -218,7 +218,7 @@ export default function Home() {
           status !== RecordingStatus.DIARIZING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
-                className="flex justify-center pl-8 transition-[margin] duration-300"
+                className={`flex justify-center pl-8${isNotesColumnResizing ? '' : ' transition-[margin] duration-300'}`}
                 style={{
                   marginLeft: contentOffset(sidebarCollapsed, notesColumnWidth)
                 }}
@@ -253,6 +253,7 @@ export default function Home() {
           isDetectingSpeakers={status === RecordingStatus.DIARIZING}
           sidebarCollapsed={sidebarCollapsed}
           notesColumnWidth={notesColumnWidth}
+          isNotesColumnResizing={isNotesColumnResizing}
         />
       </div>
     </div>

@@ -62,7 +62,6 @@
   },
   "sidebar": {
     "searchPlaceholder": "Search meeting content...",
-    "emptyNotes": "No notes",
     "deleteConfirm": "Are you sure you want to delete this meeting? This action cannot be undone.",
     "meetingDeleted": "Meeting deleted successfully",
     "meetingDeletedDescription": "All associated data has been removed",
@@ -74,7 +73,6 @@
     "meetingDateHint": "Leave empty if the meeting date is unknown.",
     "editMeetingAria": "Edit meeting details",
     "deleteMeetingAria": "Delete meeting",
-    "resizeNotesColumn": "Resize notes column",
     "matchPrefix": "Match:",
     "popup": {
       "speakers": "Speakers: {{count}}"
@@ -85,6 +83,10 @@
       "invalidDateTime": "Please enter a valid date and time",
       "updateFailed": "Failed to update meeting details"
     }
+  },
+  "notesColumn": {
+    "emptyNotes": "No notes",
+    "resizeNotesColumn": "Resize notes column"
   },
   "about": {
     "title": "About Samobranka",
