@@ -26,10 +26,10 @@ export function SummaryUpdaterButtonGroup({
         onClick={() => {
           onCopy();
         }}
-        className="cursor-pointer"
+        className="px-2 @[22rem]:px-3"
       >
         <Copy />
-        <span className="hidden @[40rem]:inline">{t('common.copy')}</span>
+        <span className="hidden @[22rem]:inline">{t('common.copy')}</span>
       </Button>
 
       {/* Export button */}
@@ -40,10 +40,10 @@ export function SummaryUpdaterButtonGroup({
         onClick={() => {
           onExport();
         }}
-        className="cursor-pointer"
+        className="px-2 @[22rem]:px-3"
       >
         <Download />
-        <span className="hidden @[40rem]:inline">{t('summary.updater.export')}</span>
+        <span className="hidden @[22rem]:inline">{t('summary.updater.export')}</span>
       </Button>
 
     </ButtonGroup>

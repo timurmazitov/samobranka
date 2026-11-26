@@ -19,6 +19,7 @@ import {
 import { Sparkles, Settings, Loader2, FileText, Check, Square } from 'lucide-react';
 import { useState, useEffect, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { TOOLBAR_MODE_GROUP_MIN_WIDTH } from './panel-toolbar';
 import '@/i18n';
 
 interface SummaryGeneratorButtonGroupProps {
@@ -88,7 +89,7 @@ export function SummaryGeneratorButtonGroup({
   const isGenerating = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
 
   return (
-    <ButtonGroup>
+    <ButtonGroup className={TOOLBAR_MODE_GROUP_MIN_WIDTH}>
       {/* Generate Summary or Stop button */}
       {isGenerating ? (
         <Button

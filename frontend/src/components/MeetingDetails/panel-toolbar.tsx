@@ -37,3 +37,21 @@ export function usePanelToolbar(node: ReactNode): boolean {
   });
   return setOutlet !== null;
 }
+
+/**
+ * Shared min-width of the two mode button groups (transcript actions and the
+ * summary generator) rendered into the toolbar bar. Pinning both groups to the
+ * same width keeps the divider and the Copy/Export pair from jumping sideways
+ * when the user switches «Транскрипт / Конспект». The value tracks the wider of
+ * the two groups in its full-label Russian state (the summary generator with
+ * «Пересоздать» and all five buttons) and applies only from the 40rem container
+ * breakpoint up, where both groups show full labels; below it the summary group
+ * collapses to icons and pinning would overflow narrow layouts.
+ *
+ * Measured with Source Sans 3 at the ≥40rem breakpoint (Russian labels):
+ * summary group («Пересоздать» + Найти/Русский/Модель/Шаблон) ≈ 497.6px,
+ * transcript group (Спикеры/Найти/Повтор/Запись/Выделить) ≈ 488.1px — hence
+ * 498px pins both groups to the same rendered width. Re-measure if the
+ * labels, button set or paddings change.
+ */
+export const TOOLBAR_MODE_GROUP_MIN_WIDTH = '@[40rem]:min-w-[498px]';

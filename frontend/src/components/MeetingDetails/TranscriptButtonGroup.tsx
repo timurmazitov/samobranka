@@ -2,7 +2,9 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group';
+import { ButtonGroup } from '@/components/ui/button-group';
+import { Separator } from '@/components/ui/separator';
+import { TOOLBAR_MODE_GROUP_MIN_WIDTH } from './panel-toolbar';
 import { Copy, Download, FolderOpen, RefreshCw, Search, SquareCheck, Users } from 'lucide-react';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { SpeakersPanel } from './SpeakersPanel';
@@ -74,7 +76,7 @@ export function TranscriptButtonGroup({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <ButtonGroup>
+      <ButtonGroup className={TOOLBAR_MODE_GROUP_MIN_WIDTH}>
         <Button
           size="sm"
           variant="outline"
@@ -149,37 +151,43 @@ export function TranscriptButtonGroup({
             <span className="hidden @[22rem]:inline">{t('transcript.selectMode')}</span>
           </Button>
         )}
-
-        <ButtonGroupSeparator />
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="px-2 @[22rem]:px-3"
-          onClick={() => {
-            onCopyTranscript();
-          }}
-          disabled={transcriptCount === 0}
-          title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.copyTooltip')}
-        >
-          <Copy />
-          <span className="hidden @[22rem]:inline">{t('common.copy')}</span>
-        </Button>
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="px-2 @[22rem]:px-3"
-          onClick={() => {
-            onExportTranscript();
-          }}
-          disabled={transcriptCount === 0}
-          title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.exportTitle')}
-        >
-          <Download />
-          <span className="hidden @[22rem]:inline">{t('transcript.exportButton')}</span>
-        </Button>
       </ButtonGroup>
+
+      {/* Copy/Export live in their own group behind a divider, mirroring the
+          summary toolbar (SummaryPanel's Separator between the two groups). */}
+      <div className="flex flex-shrink-0 items-center gap-2">
+        <Separator orientation="vertical" className="self-stretch" />
+
+        <ButtonGroup>
+          <Button
+            variant="outline"
+            size="sm"
+            className="px-2 @[22rem]:px-3"
+            onClick={() => {
+              onCopyTranscript();
+            }}
+            disabled={transcriptCount === 0}
+            title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.copyTooltip')}
+          >
+            <Copy />
+            <span className="hidden @[22rem]:inline">{t('common.copy')}</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="px-2 @[22rem]:px-3"
+            onClick={() => {
+              onExportTranscript();
+            }}
+            disabled={transcriptCount === 0}
+            title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.exportTitle')}
+          >
+            <Download />
+            <span className="hidden @[22rem]:inline">{t('transcript.exportButton')}</span>
+          </Button>
+        </ButtonGroup>
+      </div>
 
       <SpeakersPanel
         open={showSpeakersPanel}
