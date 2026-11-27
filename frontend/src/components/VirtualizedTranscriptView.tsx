@@ -567,7 +567,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
 
     return (
         <div id={`segment-${id}`} className="mb-3">
-            <div className="flex items-start gap-2">
+            <div className="group flex items-start gap-2 rounded-md transition-colors hover:bg-gray-200/70">
                 {canSelect && (
                     <input
                         type="checkbox"
@@ -629,9 +629,9 @@ const TranscriptSegment = memo(function TranscriptSegment({
                             rows={1}
                         />
                     ) : (
-                        <div className="group flex items-start gap-1">
+                        <div className="flex items-start gap-1">
                             <p
-                                className="flex-1 text-base text-gray-800 leading-relaxed"
+                                className="text-base text-gray-800 leading-relaxed"
                                 onClick={canSelect && onRowRangeSelect ? handleRowClick : undefined}
                             >
                                 {highlights && highlights.length > 0
@@ -652,7 +652,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                         editingRef.current = true;
                                         setIsEditing(true);
                                     }}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-300 rounded text-gray-500 flex-shrink-0"
                                     title={t('transcript.editTextTooltip')}
                                 >
                                     <svg
@@ -674,7 +674,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                                 <button
                                     type="button"
                                     onClick={() => { void handleDelete(); }}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-100 rounded text-gray-500 flex-shrink-0"
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-gray-300 rounded text-gray-500 flex-shrink-0"
                                     title={t('transcript.deleteSegmentTooltip')}
                                     aria-label={t('transcript.deleteSegmentTooltip')}
                                 >
