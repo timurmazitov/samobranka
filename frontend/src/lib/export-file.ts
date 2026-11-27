@@ -39,8 +39,8 @@ export interface ExportKindDescriptor {
 export const EXPORT_KINDS: Record<ExportKind, ExportKindDescriptor> = {
   transcript: {
     suffix: 'transcript',
-    extension: 'txt',
-    filterLabel: 'Text Files',
+    extension: 'md',
+    filterLabel: 'Markdown Files',
     successMessage: 'Transcript exported',
     errorMessage: 'Failed to export transcript',
   },

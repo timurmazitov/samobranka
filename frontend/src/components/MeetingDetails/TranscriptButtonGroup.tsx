@@ -3,9 +3,15 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { TOOLBAR_MODE_GROUP_MIN_WIDTH } from './panel-toolbar';
-import { Copy, Download, FolderOpen, RefreshCw, Search, SquareCheck, Users } from 'lucide-react';
+import { ChevronDown, Copy, Download, FolderOpen, RefreshCw, Search, SquareCheck, Users } from 'lucide-react';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { SpeakersPanel } from './SpeakersPanel';
 import type { DiarizationClient } from '@/lib/diarization';
@@ -153,39 +159,38 @@ export function TranscriptButtonGroup({
         )}
       </ButtonGroup>
 
-      {/* Copy/Export live in their own group behind a divider, mirroring the
-          summary toolbar (SummaryPanel's Separator between the two groups). */}
+      {/* Copy/export live in one menu behind the Export trigger, in their own
+          group behind a divider, mirroring the summary toolbar (SummaryPanel's
+          Separator between the two groups). */}
       <div className="flex flex-shrink-0 items-center gap-2">
         <Separator orientation="vertical" className="self-stretch" />
 
         <ButtonGroup>
-          <Button
-            variant="outline"
-            size="sm"
-            className="px-2 @[22rem]:px-3"
-            onClick={() => {
-              onCopyTranscript();
-            }}
-            disabled={transcriptCount === 0}
-            title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.copyTooltip')}
-          >
-            <Copy />
-            <span className="hidden @[22rem]:inline">{t('common.copy')}</span>
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className="px-2 @[22rem]:px-3"
-            onClick={() => {
-              onExportTranscript();
-            }}
-            disabled={transcriptCount === 0}
-            title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.exportTitle')}
-          >
-            <Download />
-            <span className="hidden @[22rem]:inline">{t('transcript.exportButton')}</span>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="px-2 @[22rem]:px-3"
+                disabled={transcriptCount === 0}
+                title={transcriptCount === 0 ? t('transcript.noTranscript') : t('transcript.exportTitle')}
+              >
+                <Download />
+                <span className="hidden @[22rem]:inline">{t('transcript.exportButton')}</span>
+                <ChevronDown />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => { onCopyTranscript(); }}>
+                <Copy />
+                <span>{t('common.copyToClipboard')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { onExportTranscript(); }}>
+                <Download />
+                <span>{t('common.exportAsMarkdown')}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </ButtonGroup>
       </div>
 

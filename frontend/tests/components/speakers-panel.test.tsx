@@ -89,6 +89,20 @@ afterAll(() => {
   mock.module('../../src/contexts/ConfigContext', () => originalConfig);
 });
 
+// The transcript button group's Export dropdown is Radix-based and needs a
+// DOM; the group renders here only as the Speakers button's host, so the menu
+// wrappers become plain containers.
+mock.module('../../src/components/ui/dropdown-menu', () => ({
+  DropdownMenu: Container,
+  DropdownMenuTrigger: Container,
+  DropdownMenuContent: Container,
+  DropdownMenuItem: Container,
+}));
+const originalDropdownMenu = { ...await import('../../src/components/ui/dropdown-menu') };
+afterAll(() => {
+  mock.module('../../src/components/ui/dropdown-menu', () => originalDropdownMenu);
+});
+
 const notify = mock(() => {});
 mock.module('sonner', () => ({
   toast: { info: notify, error: notify, success: notify, warning: notify },

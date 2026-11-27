@@ -349,13 +349,20 @@ function viewText(): string {
   return textOf(renderer!.toJSON());
 }
 
-/** Buttons whose accessible title is exactly `title` (Copy/Export/Generate). */
+/** Buttons whose accessible title is exactly `title` (Generate). */
 function buttonByTitle(title: string) {
   const found = renderer!.root.findAll(
     (node: any) => node.type === 'button' && node.props.title === title,
   );
   expect(found.length).toBeGreaterThanOrEqual(1);
   return found[0];
+}
+
+/** Text of a React element tree (via props.children), for finding menu items. */
+function elementText(node: any): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(elementText).join('');
+  return node?.props ? elementText(node.props.children) : '';
 }
 
 /** The edit dialog's Save button: plain text `Save`, sidebar renders first. */
@@ -386,13 +393,18 @@ function callsOf(command: string) {
   return invoke.mock.calls.filter(([name]) => name === command);
 }
 
-async function clickSummary(action: 'Export Summary' | 'Copy Summary') {
-  await act(async () => { buttonByTitle(action).props.onClick(fakeEvent); });
-  await act(async () => {});
-}
-
-async function clickExportTranscript() {
-  await act(async () => { buttonByTitle('Export Transcript').props.onClick(fakeEvent); });
+/**
+ * Copy/export live in the Export dropdown; the dropdown module is a container
+ * mock here, so the items render inline and are clicked by their visible
+ * catalog label ('Export as markdown' / 'Copy to clipboard').
+ */
+async function clickMenuItem(label: string) {
+  const found = renderer!.root.findAll(
+    (node: any) => typeof node.props?.onClick === 'function'
+      && elementText(node.props.children).includes(label),
+  );
+  expect(found.length).toBeGreaterThanOrEqual(1);
+  await act(async () => { found[0].props.onClick(fakeEvent); });
   await act(async () => {});
 }
 
@@ -430,7 +442,7 @@ describe('rename then export through the sidebar (seam #1)', () => {
     expect(titles).toHaveLength(1);
     expect(textOf(titles[0].props.children)).toBe('Renamed planning call');
 
-    await clickSummary('Export Summary');
+    await clickMenuItem('Export as markdown');
 
     expect(exportCalls()).toHaveLength(1);
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
@@ -447,11 +459,11 @@ describe('rename then export through the sidebar (seam #1)', () => {
 
     // Only one panel is mounted at a time; the transcript lives on its tab.
     await switchTab('Transcript');
-    await clickExportTranscript();
+    await clickMenuItem('Export as markdown');
 
     expect(exportCalls()).toHaveLength(1);
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
-    expect(args.defaultFileName).toBe('20261002-Renamed_planning_call-transcript.txt');
+    expect(args.defaultFileName).toBe('20261002-Renamed_planning_call-transcript.md');
     expect(args.content).toContain('# Transcript of the Meeting: meeting-a - Renamed planning call');
     expect(args.content).not.toContain('Release planning');
   });
@@ -460,13 +472,13 @@ describe('rename then export through the sidebar (seam #1)', () => {
     await show();
     await renameThroughSidebar('Renamed planning call');
 
-    await clickSummary('Copy Summary');
+    await clickMenuItem('Copy to clipboard');
 
     expect(clipboardWrites[0]).toStartWith('# Meeting Summary: Renamed planning call\n\n');
     expect(clipboardWrites[0]).toContain('**Copied on:**');
     // The copy is the same document the Export button saves, apart from the
     // label word.
-    await clickSummary('Export Summary');
+    await clickMenuItem('Export as markdown');
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
     expect(args.content).toBe(clipboardWrites[0].replace('**Copied on:**', '**Exported on:**'));
   });
@@ -525,7 +537,7 @@ describe('rename then export through the sidebar (seam #1)', () => {
     listRows = listRows.map(row => ({ ...row, title: storedTitle }));
     for (let i = 0; i < 3; i += 1) await tick();
 
-    await clickSummary('Export Summary');
+    await clickMenuItem('Export as markdown');
 
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
     expect(args.defaultFileName).toBe('20261002-Q3_Budget_Review-summary.md');

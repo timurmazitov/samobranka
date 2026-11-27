@@ -281,10 +281,15 @@ describe('SummaryUpdaterButtonGroup', () => {
     />
   );
 
-  test('labels copy and export from the catalogs', async () => {
+  test('labels the export menu from the catalogs', async () => {
     await expectTranslated(
       element,
-      ['common.copy', 'summary.updater.export', 'summary.updater.copyTitle'],
+      [
+        'summary.updater.export',
+        'summary.updater.exportTitle',
+        'common.copyToClipboard',
+        'common.exportAsMarkdown',
+      ],
       ['Copy Summary', 'Export Summary'],
     );
   });

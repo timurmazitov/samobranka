@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 // The «Выделение» toggle (ticket 02) joins the transcript panel's button
@@ -20,6 +20,22 @@ mock.module('../../src/contexts/ConfigContext', () => ({
   }),
 }));
 
+// The group's Export dropdown is Radix-based and needs a DOM; this suite
+// drives only the selection toggle, so the menu wrappers become plain
+// containers (re-registered in beforeEach like the config mock).
+const Container = ({ children }: any) => <div>{children}</div>;
+const dropdownMenuMock = () => ({
+  DropdownMenu: Container,
+  DropdownMenuTrigger: Container,
+  DropdownMenuContent: Container,
+  DropdownMenuItem: Container,
+});
+const originalDropdownMenu = { ...await import('../../src/components/ui/dropdown-menu') };
+mock.module('../../src/components/ui/dropdown-menu', dropdownMenuMock);
+afterAll(() => {
+  mock.module('../../src/components/ui/dropdown-menu', () => originalDropdownMenu);
+});
+
 const { TranscriptButtonGroup } = await import(
   '../../src/components/MeetingDetails/TranscriptButtonGroup'
 );
@@ -33,6 +49,7 @@ beforeEach(() => {
       transcriptModelConfig: { provider: 'whisper', model: 'large-v3' },
     }),
   }));
+  mock.module('../../src/components/ui/dropdown-menu', dropdownMenuMock);
   errorNotify.mockClear();
 });
 afterEach(async () => {

@@ -6,6 +6,8 @@
     "delete": "Delete",
     "close": "Close",
     "copy": "Copy",
+    "copyToClipboard": "Copy to clipboard",
+    "exportAsMarkdown": "Export as markdown",
     "clear": "Clear",
     "loading": "Loading...",
     "searching": "Searching...",
@@ -1027,7 +1029,6 @@
   },
   "transcript": {
     "noTranscript": "No transcript available",
-    "copyTooltip": "Copy Transcript",
     "exportTitle": "Export Transcript",
     "exportButton": "Export",
     "openRecordingFolder": "Open Recording Folder",
@@ -1068,7 +1069,6 @@
     "selectAllVisibleTooltip": "Select all loaded speech segments; press again to clear",
     "selectBySpeaker": "Speaker",
     "selectBySpeakerTooltip": "Select all loaded segments of a speaker",
-    "homeCopyTitle": "Copy Transcript",
     "homeExportTitle": "Export Transcript",
     "homeLanguageTitle": "Language",
     "homeExport": "Export",
@@ -1124,7 +1124,6 @@
       "savingTitle": "Saving",
       "saveTitle": "Save Changes",
       "saving": "Saving...",
-      "copyTitle": "Copy Summary",
       "exportTitle": "Export Summary",
       "export": "Export"
     },

@@ -5,7 +5,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 // ticket 03): losing focus from the BlockNote editor persists unsaved edits
 // through the same editor ref API the old Save button used, and only when the
 // editor is dirty; the panel itself no longer offers a Save button or a dirty
-// highlight — Copy and Export stay. The real panel is rendered with the
+// highlight — the Export menu with its copy/export commands stays. The real
+// panel is rendered with the
 // BlockNote body stubbed by an editor double exposing the ref API (the same
 // harness as summary-panel-search-button), so the tests drive the blur the
 // way the DOM would and observe the ref calls.
@@ -253,14 +254,15 @@ describe('summary panel blur autosave', () => {
 });
 
 describe('summary panel without the Save button', () => {
-  test('no Save button or dirty highlight remains; Copy and Export stay', async () => {
+  test('no Save button or dirty highlight remains; the Export menu stays', async () => {
     installEditor({ isDirty: true });
     const view = await render();
 
-    // The English catalog values of summary.updater.saveTitle / copyTitle /
-    // exportTitle — the buttons are found by what the user reads.
+    // The English catalog values of summary.updater.saveTitle / exportTitle —
+    // the buttons are found by what the user reads. Copy is a menu item inside
+    // the Export dropdown now, so no standalone Copy button remains.
     expect(buttonByTitle(view, 'Save Changes')).toBeUndefined();
-    expect(buttonByTitle(view, 'Copy Summary')).toBeDefined();
+    expect(buttonByTitle(view, 'Copy Summary')).toBeUndefined();
     expect(buttonByTitle(view, 'Export Summary')).toBeDefined();
     // The dirty highlight lived on the Save button; nothing green remains.
     const highlighted = view.root.findAll(

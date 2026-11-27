@@ -2,7 +2,13 @@ import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptVie
 import { PermissionWarning } from '@/components/PermissionWarning';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, Download, GlobeIcon } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ChevronDown, Copy, Download, GlobeIcon } from 'lucide-react';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
@@ -62,30 +68,31 @@ export function TranscriptPanel({
             <div className="flex justify-center  items-center space-x-2">
               <ButtonGroup>
                 {transcripts?.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={copyTranscript}
-                    title={t('transcript.homeCopyTitle')}
-                  >
-                    <Copy />
-                    <span className='hidden md:inline'>
-                      {t('common.copy')}
-                    </span>
-                  </Button>
-                )}
-                {transcripts?.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={exportTranscript}
-                    title={t('transcript.homeExportTitle')}
-                  >
-                    <Download />
-                    <span className='hidden md:inline'>
-                      {t('transcript.homeExport')}
-                    </span>
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title={t('transcript.homeExportTitle')}
+                      >
+                        <Download />
+                        <span className='hidden md:inline'>
+                          {t('transcript.homeExport')}
+                        </span>
+                        <ChevronDown />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => { copyTranscript(); }}>
+                        <Copy />
+                        <span>{t('common.copyToClipboard')}</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { exportTranscript(); }}>
+                        <Download />
+                        <span>{t('common.exportAsMarkdown')}</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
                 {transcriptModelConfig.provider === "transcribeCpp" &&
                   <Button

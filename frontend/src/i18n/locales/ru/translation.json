@@ -6,6 +6,8 @@
     "delete": "Удалить",
     "close": "Закрыть",
     "copy": "Копировать",
+    "copyToClipboard": "Копировать в буфер",
+    "exportAsMarkdown": "Экспорт в markdown",
     "clear": "Очистить",
     "loading": "Загрузка...",
     "searching": "Поиск...",
@@ -1050,7 +1052,6 @@
   },
   "transcript": {
     "noTranscript": "Транскрипция недоступна",
-    "copyTooltip": "Копировать транскрипцию",
     "exportTitle": "Экспортировать транскрипцию",
     "exportButton": "Экспорт",
     "openRecordingFolder": "Открыть папку записи",
@@ -1095,7 +1096,6 @@
     "selectAllVisibleTooltip": "Выделить все загруженные речевые сегменты; повторное нажатие снимает выделение",
     "selectBySpeaker": "Спикер",
     "selectBySpeakerTooltip": "Выделить все загруженные речевые сегменты спикера",
-    "homeCopyTitle": "Копировать транскрипцию",
     "homeExportTitle": "Экспортировать транскрипцию",
     "homeLanguageTitle": "Язык",
     "homeExport": "Экспорт",
@@ -1152,7 +1152,6 @@
       "savingTitle": "Сохранение",
       "saveTitle": "Сохранить изменения",
       "saving": "Сохранение...",
-      "copyTitle": "Копировать конспект",
       "exportTitle": "Экспортировать конспект",
       "export": "Экспорт"
     },

@@ -209,7 +209,7 @@ describe('the document date is the meeting date, not the row creation time', () 
 
   test('exports the transcript under a file name built from the meeting date', async () => {
     meetingRecordedAt = '2026-10-02T09:15:00';
-    savedPath = '/home/user/exports/20261002-Release_planning-transcript.txt';
+    savedPath = '/home/user/exports/20261002-Release_planning-transcript.md';
 
     await show();
     await act(async () => {
@@ -217,7 +217,7 @@ describe('the document date is the meeting date, not the row creation time', () 
     });
 
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
-    expect(args.defaultFileName).toBe('20261002-Release_planning-transcript.txt');
+    expect(args.defaultFileName).toBe('20261002-Release_planning-transcript.md');
   });
 
   test('keeps the current-moment fallback for a meeting without a meeting date', async () => {
@@ -451,7 +451,7 @@ describe('summary export through the native dialog', () => {
   });
 });
 
-describe('transcript export keeps its text file contract', () => {
+describe('transcript export keeps its markdown file contract', () => {
   test('copies the meeting date as its local calendar day', async () => {
     // The meeting date may arrive as a bare `YYYY-MM-DD`; reading it as UTC
     // midnight would print the previous day west of Greenwich.
@@ -466,8 +466,8 @@ describe('transcript export keeps its text file contract', () => {
     expect(clipboardWrites[0]).toContain(`## Date: ${expectedDay}`);
   });
 
-  test('sends txt and Text Files to the shared command', async () => {
-    savedPath = '/home/user/exports/20261118-Release_planning-transcript.txt';
+  test('sends md and Markdown Files to the shared command', async () => {
+    savedPath = '/home/user/exports/20261118-Release_planning-transcript.md';
 
     await show();
     await act(async () => {
@@ -476,12 +476,12 @@ describe('transcript export keeps its text file contract', () => {
 
     expect(exportCalls()).toHaveLength(1);
     const [, args] = exportCalls()[0] as [string, Record<string, unknown>];
-    expect(args.extension).toBe('txt');
-    expect(args.filterLabel).toBe('Text Files');
-    expect(args.defaultFileName).toBe('20261118-Release_planning-transcript.txt');
-    expect(clipboardWrites).toEqual(['/home/user/exports/20261118-Release_planning-transcript.txt']);
+    expect(args.extension).toBe('md');
+    expect(args.filterLabel).toBe('Markdown Files');
+    expect(args.defaultFileName).toBe('20261118-Release_planning-transcript.md');
+    expect(clipboardWrites).toEqual(['/home/user/exports/20261118-Release_planning-transcript.md']);
     expect(successToast).toHaveBeenCalledWith('Transcript exported', {
-      description: '/home/user/exports/20261118-Release_planning-transcript.txt',
+      description: '/home/user/exports/20261118-Release_planning-transcript.md',
     });
   });
 });

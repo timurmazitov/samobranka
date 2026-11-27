@@ -17,12 +17,12 @@ describe('buildExportFileName', () => {
     setSystemTime();
   });
 
-  test('builds YYYYMMDD-title-transcript.txt from the meeting date', () => {
+  test('builds YYYYMMDD-title-transcript.md from the meeting date', () => {
     expect(buildExportFileName({
       date: localDate(2026, 11, 18),
       title: 'Release planning',
       kind: 'transcript',
-    })).toBe('20261118-Release_planning-transcript.txt');
+    })).toBe('20261118-Release_planning-transcript.md');
   });
 
   test('supports the summary suffix and extension', () => {
@@ -38,7 +38,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 1, 2, 23),
       title: 'Late meeting',
       kind: 'transcript',
-    })).toBe('20260102-Late_meeting-transcript.txt');
+    })).toBe('20260102-Late_meeting-transcript.md');
   });
 
   test('accepts a timestamp-string meeting date', () => {
@@ -47,7 +47,7 @@ describe('buildExportFileName', () => {
       date: recordedAt,
       title: 'Kickoff',
       kind: 'transcript',
-    })).toBe('20260901-Kickoff-transcript.txt');
+    })).toBe('20260901-Kickoff-transcript.md');
   });
 
   test('accepts a date-only meeting date as that local day', () => {
@@ -55,7 +55,7 @@ describe('buildExportFileName', () => {
       date: '2026-09-01',
       title: 'Kickoff',
       kind: 'transcript',
-    })).toBe('20260901-Kickoff-transcript.txt');
+    })).toBe('20260901-Kickoff-transcript.md');
   });
 
   test('accepts a meeting date in the RFC3339 form the backend sends', () => {
@@ -79,7 +79,7 @@ describe('buildExportFileName', () => {
         date,
         title: 'Release planning',
         kind: 'transcript',
-      })).toBe('20261118-Release_planning-transcript.txt');
+      })).toBe('20261118-Release_planning-transcript.md');
     }
   });
 
@@ -93,7 +93,7 @@ describe('buildExportFileName', () => {
         date,
         title: 'Release planning',
         kind: 'transcript',
-      })).toBe('20261118-Release_planning-transcript.txt');
+      })).toBe('20261118-Release_planning-transcript.md');
     }
   });
 
@@ -102,7 +102,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: 'Планёрка Продукта',
       kind: 'transcript',
-    }), 'transcript', 'txt')).toBe('Планёрка_Продукта');
+    }), 'transcript', 'md')).toBe('Планёрка_Продукта');
   });
 
   test('turns spaces into single underscores', () => {
@@ -110,7 +110,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: '  Release    planning   meeting  ',
       kind: 'transcript',
-    }), 'transcript', 'txt')).toBe('Release_planning_meeting');
+    }), 'transcript', 'md')).toBe('Release_planning_meeting');
   });
 
   test('replaces characters that file systems reject', () => {
@@ -120,7 +120,7 @@ describe('buildExportFileName', () => {
       kind: 'transcript',
     });
 
-    expect(titlePart(fileName, 'transcript', 'txt')).toBe('a_b_c_d_e_f_g_h_i_j');
+    expect(titlePart(fileName, 'transcript', 'md')).toBe('a_b_c_d_e_f_g_h_i_j');
     expect(fileName).not.toMatch(/[\\/:*?"<>|]/);
   });
 
@@ -129,7 +129,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: 'Line one\nLine\ttwo\r\n\r\nLine three',
       kind: 'transcript',
-    }), 'transcript', 'txt')).toBe('Line_one_Line_two_Line_three');
+    }), 'transcript', 'md')).toBe('Line_one_Line_two_Line_three');
   });
 
   test('collapses repeated and edge underscores', () => {
@@ -137,7 +137,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: '___Release // planning ___',
       kind: 'transcript',
-    }), 'transcript', 'txt')).toBe('Release_planning');
+    }), 'transcript', 'md')).toBe('Release_planning');
   });
 
   test('truncates a long Cyrillic title to 60 characters', () => {
@@ -146,7 +146,7 @@ describe('buildExportFileName', () => {
       title: 'Очень длинное название встречи про планирование релиза номер один',
       kind: 'transcript',
     })).toBe(
-      '20261118-Очень_длинное_название_встречи_про_планирование_релиза_номер-transcript.txt',
+      '20261118-Очень_длинное_название_встречи_про_планирование_релиза_номер-transcript.md',
     );
   });
 
@@ -157,7 +157,7 @@ describe('buildExportFileName', () => {
       kind: 'transcript',
     });
 
-    expect(titlePart(fileName, 'transcript', 'txt')).toBe(`a${'😀'.repeat(59)}`);
+    expect(titlePart(fileName, 'transcript', 'md')).toBe(`a${'😀'.repeat(59)}`);
     expect(fileName.isWellFormed()).toBe(true);
   });
 
@@ -166,7 +166,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: 'слово '.repeat(12),
       kind: 'transcript',
-    }), 'transcript', 'txt')).toBe(
+    }), 'transcript', 'md')).toBe(
       'слово_слово_слово_слово_слово_слово_слово_слово_слово_слово',
     );
   });
@@ -177,7 +177,7 @@ describe('buildExportFileName', () => {
         date: localDate(2026, 11, 18),
         title,
         kind: 'transcript',
-      })).toBe('20261118-meeting-transcript.txt');
+      })).toBe('20261118-meeting-transcript.md');
     }
   });
 
@@ -186,7 +186,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: ' /// ',
       kind: 'transcript',
-    })).toBe('20261118-meeting-transcript.txt');
+    })).toBe('20261118-meeting-transcript.md');
   });
 
   test('falls back to meeting for the new-call placeholder title', () => {
@@ -194,7 +194,7 @@ describe('buildExportFileName', () => {
       date: localDate(2026, 11, 18),
       title: '+ New Call',
       kind: 'transcript',
-    })).toBe('20261118-meeting-transcript.txt');
+    })).toBe('20261118-meeting-transcript.md');
   });
 
   test('keeps the dot in a title and still appends the extension', () => {
@@ -214,14 +214,14 @@ describe('buildExportFileName', () => {
 
     expect(fileName).not.toMatch(/[\\/:*?"<>|]/);
     expect(fileName).not.toMatch(/[\n\r\t]/);
-    expect(fileName).toMatch(/^\d{8}-[^-]+-transcript\.txt$/u);
+    expect(fileName).toMatch(/^\d{8}-[^-]+-transcript\.md$/u);
   });
 });
 
 describe('ensureFileExtension', () => {
   test('appends the extension when the name has none', () => {
-    expect(ensureFileExtension('20261118-Release_planning-transcript', 'txt'))
-      .toBe('20261118-Release_planning-transcript.txt');
+    expect(ensureFileExtension('20261118-Release_planning-transcript', 'md'))
+      .toBe('20261118-Release_planning-transcript.md');
   });
 
   test('accepts an extension written with a leading dot', () => {
@@ -230,8 +230,8 @@ describe('ensureFileExtension', () => {
   });
 
   test('keeps an extension the name already has', () => {
-    expect(ensureFileExtension('20261118-Release_planning-transcript.txt', 'txt'))
-      .toBe('20261118-Release_planning-transcript.txt');
+    expect(ensureFileExtension('20261118-Release_planning-transcript.md', 'md'))
+      .toBe('20261118-Release_planning-transcript.md');
   });
 
   test('does not replace an extension the user typed', () => {
