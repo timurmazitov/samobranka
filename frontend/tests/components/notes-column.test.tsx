@@ -162,6 +162,28 @@ test('the column renders only on the notes routes', async () => {
   expect(viewTextOf(view)).toContain('Planning call');
 });
 
+test('navigating from a plain route to a notes route on the mounted column shows it', async () => {
+  listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
+
+  // The root layout mounts the column once for the whole session: it starts
+  // hidden on a plain route...
+  currentPathname = '/';
+  const view = await show();
+  expect(view.root.findAll((node) => node.type === 'aside').length).toBe(0);
+
+  // ...and the notes button navigates, so the same mounted instance
+  // re-renders visible. A conditional hook behind the visibility early
+  // return made React throw "Rendered more hooks than during the previous
+  // render" right here — the production "Application error" screen.
+  currentPathname = '/meeting-details';
+  await act(async () => {
+    view.update(<SidebarProvider><NotesColumn /></SidebarProvider>);
+  });
+
+  expect(view.root.findAll((node) => node.type === 'aside').length).toBe(1);
+  expect(viewTextOf(view)).toContain('Planning call');
+});
+
 test('the meeting list has no folder icon/title header above it', async () => {
   listRows = [{ id: 'meeting-1', title: 'Planning call', recorded_at: recordedAt }];
 

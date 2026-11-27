@@ -30,6 +30,15 @@ const NotesColumn: React.FC = () => {
     setNotesColumnResizing,
   } = useSidebar();
 
+  // The active drag's teardown lives in a ref so an unmount mid-drag runs it
+  // too: listeners off, text selection back, transitions on. The hooks stay
+  // above the visibility early-return: the root layout mounts the column for
+  // the whole session, so the notes button flips the same instance from
+  // hidden to visible — a hook behind the return would change the hook count
+  // between those renders and crash React.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+
   if (!isNotesColumnVisible) return null;
 
   // Drag-resize without new dependencies: mousedown on the handle arms
@@ -40,10 +49,6 @@ const NotesColumn: React.FC = () => {
   // The resizing flag drops the width/margin transitions of the column and
   // every offset consumer for the drag, so the layout tracks the cursor
   // instead of animating behind it; mouseup brings the transitions back.
-  // The active drag's teardown lives in a ref so an unmount mid-drag runs it
-  // too: listeners off, text selection back, transitions on.
-  const dragCleanupRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   const handleResizeStart = (event: React.MouseEvent) => {
     event.preventDefault();
