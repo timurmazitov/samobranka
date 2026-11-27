@@ -3,6 +3,7 @@
 import { MeetingSummary, Summary, Transcript } from '@/types';
 import type { Match, SummaryBlock } from '@/hooks/meeting-details/useFindReplace';
 import { BlockNoteSummaryView, BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
+import { detectSummaryFormat } from '@/lib/summary-format';
 import { EmptyStateSummary } from '@/components/EmptyStateSummary';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
@@ -242,6 +243,12 @@ export function SummaryPanel({
 
   const isSummaryLoading = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
   const hasSummary = hasVisibleSummaryContent(aiSummary);
+  // BlockNote and markdown summaries render inside the editor, whose own
+  // `.bn-editor` padding-inline (54px) pushes the text 54px right of the
+  // scroll container's p-6 edge; legacy textareas start at that edge. The
+  // title row pads to the editor's text column so the title reads aligned
+  // with the summary body instead of hanging 54px to its left.
+  const summaryTextInEditor = detectSummaryFormat(aiSummary).format !== 'legacy';
   const formattedMeetingDate = formatMeetingDateTime(meetingDate, language);
 
   const languageSlot = (
@@ -354,8 +361,11 @@ export function SummaryPanel({
               both are read next to the summary they describe. The row stays
               outside the scroll area and never scrolls away. The title shows
               even when the date is unknown; an unknown date draws nothing and
-              is never replaced by the current moment (ADR-0005). */}
-          <div className="flex items-start justify-between gap-4 px-6 pt-4">
+              is never replaced by the current moment (ADR-0005). The left
+              padding is 78px for editor formats — the scroll container's
+              p-6 (24px) plus the editor's own 54px text inset — so the title
+              starts exactly where the summary text starts. */}
+          <div className={`flex items-start justify-between gap-4 pt-4 ${summaryTextInEditor ? 'pl-[78px] pr-6' : 'px-6'}`}>
             <h1 className="min-w-0 break-words text-2xl font-bold text-black">
               {meetingTitle}
             </h1>
